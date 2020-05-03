@@ -1,0 +1,19 @@
+{
+    "name": "open-web-analytics/owa-php-sdk",
+    "description": "The open source analytics framework.",
+    "keywords": ["open-web-analytics","owa","web-analytics","analytics"],
+    "homepage": "https://www.openwebanalytics.com",
+    "license": "GPL-2.0",
+    "authors": [
+        {
+            "name": "The OWA Team",
+            "email": "hello@openwebanalytics.com"
+        }
+    ],
+    "config": {
+        "sort-packages": true
+    },
+    "require": {
+        "guzzlehttp/guzzle": "~6.0"
+    }
+}
