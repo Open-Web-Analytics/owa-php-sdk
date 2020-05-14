@@ -22,6 +22,7 @@ class sdk {
 			ini_set('display_errors', 1);
 			error_reporting( -1 );
 			
+			
 		}
 	}
 	
@@ -93,7 +94,7 @@ class sdk {
 			$msg = print_r( $msg, true );
 		}
 		
-		error_log( $msg );
+		error_log( $msg . "\n", 3, "./errors.log" );
 	}
 
 }
