@@ -585,6 +585,11 @@ class TrackerClient extends OwaClient {
 
         $this->setGlobalEventProperty( 'user_name', $value );
     }
+    
+    public function setUserEmail( $value ) {
+
+        $this->setGlobalEventProperty( 'user_email', $value );
+    }
 
     function getCampaignProperties( $event ) {
 
