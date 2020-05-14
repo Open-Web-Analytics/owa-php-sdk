@@ -44,3 +44,4 @@ $tracker->trackPageView();
 
 - [Open Web Analytics Core](https://github.com/Open-Web-Analytics/open-web-analytics)
 - [WordPress Integration Plugin](https://github.com/Open-Web-Analytics/owa-wordpress-plugin)
+- [MediaWiki Integration Extension](https://github.com/Open-Web-Analytics/owa-mediawiki-extension/)
