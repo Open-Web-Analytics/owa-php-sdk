@@ -19,6 +19,12 @@ If you find a bug in the SDK, please let us know about it. However, before you c
 
 ## Getting Started
 
+- **Minimum requirements** - to use the SDK you must be using OWA core v1.7.0 or later as well as PHP 7+.  We highly recommend having your PHP compiled with the cURL extension.
+
+- **Install the SDK** - download a tarball of the latest release or check the code out from a branch in this Github repository. If you do pull the code from a branch, be sure ot run `composer update` in order to pull in all of the dependancies (Guzzle, etc.) that are required.
+
+- **User Guide** - reead the [user guide](https://github.com/Open-Web-Analytics/owa-php-sdk/wiki) in order to lear how to work wit hthe SDK.
+
 ## Quick Example
 
 ### Create a Tracker ###
