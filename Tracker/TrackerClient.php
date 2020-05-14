@@ -5,6 +5,7 @@ use OwaSdk\Tracker\State;
 use OwaSdk\OwaClient;
 use OwaSdk\Tracker\TrackingEvent;
 use OwaSdk\sdk as sdk;
+
 /**
  * Open Web Analytics - An Open Source Web Analytics Framework
  * Licensed under GPL v2.0 http://www.gnu.org/copyleft/gpl.html
@@ -39,8 +40,6 @@ class TrackerClient extends OwaClient {
 
     public function __construct($config = null) {
 
-        parent::__construct($config);
-	
 		$this->config = [
 			
 			'visitor_param'                     => 'v',
@@ -62,6 +61,9 @@ class TrackerClient extends OwaClient {
             'ns'								=> 'owa_',
             'cookie_persistence'                => true,  // Controls persistence of cookies, only for use in europe needed
 		];
+		
+		// parent will override the default config with passed values.
+		parent::__construct($config);
 		
 		if (array_key_exists( 'cookie_domain',  $config) ) {
 			
@@ -275,6 +277,7 @@ class TrackerClient extends OwaClient {
 
         $is_new_session = $this->isNewSession( $event->get( 'timestamp' ),  $this->getGlobalEventProperty( 'last_req' ) );
         if ( $is_new_session ) {
+	        sdk::debug("is new session");
             //set prior_session_id
             $prior_session_id = $this->state->get('s', 'sid');
             if ( ! $prior_session_id ) {
@@ -341,7 +344,7 @@ class TrackerClient extends OwaClient {
      * @return boolean
      */
     private function isNewSession($timestamp = '', $last_req = 0) {
-
+		
         $is_new_session = false;
 
         if ( ! $timestamp ) {
@@ -403,7 +406,7 @@ class TrackerClient extends OwaClient {
         }
 
         // add custom variables to global properties if not there already
-        for ( $i=1; $i <= $this->getSetting('base', 'maxCustomVars'); $i++ ) {
+        for ( $i=1; $i <= $this->getSetting( 'maxCustomVars' ); $i++ ) {
             $cv_param_name = 'cv' . $i;
             $cv_value = '';
 

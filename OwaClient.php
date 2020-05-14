@@ -4,9 +4,10 @@ namespace OwaSdk;
 
 class OwaClient {
 	
-	public function __construct() {
+	public function __construct( $config ) {
 		
-		
+		// override default config with config array passed in.
+		$this->config = array_merge( $this->config, $config );
 	}
 	
 	public function getSetting( $name ) {
