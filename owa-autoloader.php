@@ -18,5 +18,8 @@ spl_autoload_register(function ($class) use ($mapping) {
     }
     
 }, true);
-	
+
+
+require_once( __DIR__ . '/vendor/autoload.php' );
+
 ?>

@@ -42,6 +42,7 @@ class TrackerClient extends OwaClient {
 
 		$this->config = [
 			
+			'instance_url'						=> '',
 			'visitor_param'                     => 'v',
 			'campaign_params' 					=> [
                 'campaign'      => 'owa_campaign',
@@ -379,6 +380,7 @@ class TrackerClient extends OwaClient {
         }
 
         $this->setGlobalEventProperty( 'HTTP_REFERER', $this->getServerParam('HTTP_REFERER') );
+		$this->setGlobalEventProperty( 'HTTP_USER_AGENT', $this->getServerParam('HTTP_USER_AGENT') );
 
         // needed by helper page tags function so it can append to first hit tag url
         if (!$this->getSiteId()) {
@@ -1117,6 +1119,37 @@ class TrackerClient extends OwaClient {
 		
 		sdk::debug('implement logEvent method');
 		print_r($event);
+		
+		$conf = [
+			
+			'base_uri' => $this->getSetting('instance_url')
+		];
+		
+		$http = $this->getHttpClient( $conf );
+		$params = $event->getProperties();
+		$params['event_type'] = $event->getEventType();
+		
+		$params = $this->applyNamespaceToKeys( $params );
+		
+		$res = $http->request(
+			'GET', 'log.php', 
+			['query' => $params ] 
+		);
+		
+		print_r($res);
+		
+	}
+	
+	private function applyNameSpaceToKeys( $params ) {
+		
+		$nparams = [];
+		$ns = $this->getSetting('ns');
+		foreach ( $params as $k => $v ) {
+			
+			$nparams[ $ns.$k ] = $v;
+		}
+		
+		return $nparams;
 	}
 	
 	private function getRequestParam($name) {

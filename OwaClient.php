@@ -1,6 +1,7 @@
 <?php
 
 namespace OwaSdk;
+use GuzzleHttp\Client;
 
 class OwaClient {
 	
@@ -85,7 +86,12 @@ class OwaClient {
 
         return ($home_drive && $home_path) ? $home_drive . $home_path : null;
     }
-
+	
+	public function getHttpClient( $params = [] ) {
+		
+		return new Client( $params );
+		
+	}
 }	
 	
 ?>
