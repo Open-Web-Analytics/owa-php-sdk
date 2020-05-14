@@ -26,6 +26,7 @@ class State {
     private $default_store_type;
     private $stores_with_cdh;
     private $initial_state;
+    private $cookies;
 
     function __construct( $config = []) {
 		
@@ -38,13 +39,16 @@ class State {
 		$this->config = array_merge( $this->config, $config );
 		
 		
-		$this->stores = array();
-	    $this->stores_meta = array();
+        $this->cookies = [];
+		$this->stores = [];
+	    $this->stores_meta = [];
 	    $this->is_dirty;
 	    $this->dirty_stores;
 	    $this->default_store_type = 'cookie';
-	    $this->stores_with_cdh = array();
-	    $this->initial_state = array();
+	    $this->stores_with_cdh = [];
+	    $this->initial_state = [];
+	    
+	    $this->initializeStores();
     }
 
 	private function getSetting( $name ) {
@@ -411,6 +415,78 @@ class State {
 
 
     }
+    
+    private function initializeStores() {
+	    
+        // look for access to the raw HTTP cookie string. This is needed becuause OWA can set settings cookies
+        // with the same name under different subdomains. Multiple cookies with the same name are not
+        // available under $_COOKIE. Therefor OWA's cookie conainter must be an array of arrays.
+        if ( isset( $_SERVER['HTTP_COOKIE'] ) && strpos( $_SERVER['HTTP_COOKIE'], ';') ) {
+
+            $raw_cookie_array = explode(';', $_SERVER['HTTP_COOKIE']);
+
+            foreach($raw_cookie_array as $raw_cookie ) {
+
+                $nvp = explode( '=', trim( $raw_cookie ) );
+                $this->cookies[ $nvp[0] ][] = urldecode($nvp[1]);
+            }
+
+        } else {
+            // just use the normal cookie global
+            if ( $_COOKIE && is_array($_COOKIE) ) {
+
+                foreach ($_COOKIE as $n => $v) {
+                    // hack against other frameworks sanitizing cookie data and blowing away our '>' delimiter
+                    // this should be removed once all cookies are using json format.
+                    if (strpos($v, '&gt;')) {
+                        $v = str_replace("&gt;", ">", $v);
+                    }
+
+                    $cookies[ $n ][] = $v;
+                }
+            }
+        }
+
+        // populate owa_cookie container with just the cookies that have the owa namespace.
+        $this->cookies = $this->stripParams( $this->cookies, $this->getSetting( 'ns' ) );
+		
+		// merges cookies
+        foreach ( $this->cookies as $k => $owa_cookie ) {
+
+            $this->setInitialState( $k, $owa_cookie );
+        }
+    }
+    
+    private function stripParams($params, $ns = '') {
+
+        $striped_params = array();
+
+        if (!empty($ns)) {
+
+            $len = strlen($ns);
+
+            foreach ($params as $n => $v) {
+
+                // if namespace is present in param
+                if (strstr($n, $ns)) {
+                    // strip the namespace value
+                    $striped_n = substr($n, $len);
+                    //add to striped array
+                    $striped_params[$striped_n] = $v;
+
+                }
+
+            }
+
+            return $striped_params;
+
+        } else {
+
+            return $params;
+        }
+
+    }
+
 
 }
 
