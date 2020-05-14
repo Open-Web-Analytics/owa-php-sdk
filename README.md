@@ -1,5 +1,5 @@
 # Open Web Analytics SDK for PHP
-The OWA Software Development Kit for PHP makes it easy to perform web analytics tracking and administrative tasks from within PHP code. You can get started by installing The SDK via composer or downloading a tarball of our latest release. The SDK is licensed under GLP v2.0.
+The OWA Software Development Kit for PHP makes it easy to use [Open Web Analytics](https://github.com/Open-Web-Analytics/Open-Web-Analytics) in your PHP code enabled you to easily as web analytics tracking to any PHP application. You can get started by installing The SDK via composer or downloading a tarball of our latest release. The SDK is licensed under GLP v2.0.
 
 ## Resource
 
