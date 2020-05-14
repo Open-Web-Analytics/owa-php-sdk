@@ -33,7 +33,7 @@ If you find a bug in the SDK, please let us know about it. However, before you c
 <?php require_once('owa-php-sdk/owa-autoloader.php');
 
 $config = [
-    'instance_url' => 'http://standalone-php5-test.openwebanalytics.com/owa/'
+    'instance_url' => 'http://your.domain.com/owa/'
 ];
 
 $sdk = new OwaSdk\sdk($config);
