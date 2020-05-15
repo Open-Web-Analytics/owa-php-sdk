@@ -1141,8 +1141,7 @@ class TrackerClient extends OwaClient {
 			['query' => $params ] 
 		);
 		
-		print_r($res);
-		
+		return $res;
 	}
 	
 	private function applyNameSpaceToKeys( $params ) {
