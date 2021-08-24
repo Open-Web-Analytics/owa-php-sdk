@@ -66,6 +66,8 @@ class TrackerClient extends OwaClient {
 		// parent will override the default config with passed values.
 		parent::__construct($config);
 		
+		$domain = '';
+		
 		if (array_key_exists( 'cookie_domain',  $config) ) {
 			
 			$domain = $config['cookie_domain'];			
