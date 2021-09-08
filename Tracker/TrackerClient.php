@@ -1125,7 +1125,6 @@ class TrackerClient extends OwaClient {
 	private function logEvent($event_type, $event) {
 		
 		sdk::debug('implement logEvent method');
-		print_r($event);
 		
 		$conf = [
 			
