@@ -66,6 +66,8 @@ class TrackerClient extends OwaClient {
 		// parent will override the default config with passed values.
 		parent::__construct($config);
 		
+		$domain = '';
+
 		if (array_key_exists( 'cookie_domain',  $config) ) {
 			
 			$domain = $config['cookie_domain'];			
@@ -1123,6 +1125,7 @@ class TrackerClient extends OwaClient {
 	private function logEvent($event_type, $event) {
 		
 		sdk::debug('implement logEvent method');
+
 		$conf = [
 			
 			'base_uri' => $this->getSetting('instance_url')
