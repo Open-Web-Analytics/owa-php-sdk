@@ -447,7 +447,7 @@ class TrackerClient extends OwaClient {
         return $this->trackEvent($this->pageview_event);
     }
 
-    public function trackAction($action_group = '', $action_name, $action_label = '', $numeric_value = 0) {
+    public function trackAction($action_name, $action_group = '', $action_label = '', $numeric_value = 0) {
 
         $event = $this->makeEvent();
         $event->setEventType('track.action');
