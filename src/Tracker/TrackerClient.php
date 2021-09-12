@@ -67,7 +67,7 @@ class TrackerClient extends OwaClient {
 		parent::__construct($config);
 		
 		$domain = '';
-		
+
 		if (array_key_exists( 'cookie_domain',  $config) ) {
 			
 			$domain = $config['cookie_domain'];			
@@ -447,7 +447,7 @@ class TrackerClient extends OwaClient {
         return $this->trackEvent($this->pageview_event);
     }
 
-    public function trackAction($action_group = '', $action_name, $action_label = '', $numeric_value = 0) {
+    public function trackAction($action_name, $action_group = '', $action_label = '', $numeric_value = 0) {
 
         $event = $this->makeEvent();
         $event->setEventType('track.action');
@@ -1125,7 +1125,7 @@ class TrackerClient extends OwaClient {
 	private function logEvent($event_type, $event) {
 		
 		sdk::debug('implement logEvent method');
-		
+
 		$conf = [
 			
 			'base_uri' => $this->getSetting('instance_url')
