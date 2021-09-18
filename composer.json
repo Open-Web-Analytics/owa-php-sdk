@@ -13,8 +13,10 @@
     "config": {
         "sort-packages": true
     },
+    
     "require": {
-        "guzzlehttp/guzzle": "~6.0"
+        "guzzlehttp/guzzle": "6.5.3",
+        "symfony/polyfill-intl-idn": "1.15"
     },
 	"autoload": {
 		"psr-4": {
