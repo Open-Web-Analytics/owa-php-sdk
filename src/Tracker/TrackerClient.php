@@ -201,7 +201,7 @@ class TrackerClient extends OwaClient {
         }
 
         if ( ! $visitor_id ) {
-            $visitor_id = $event->getSiteSpecificGuid( $this->site_id );
+            $visitor_id = $event->getSiteSpecificGuid( $this->getSiteId() );
             $this->setGlobalEventProperty( 'is_new_visitor', true );
             $this->state->set( 'v', 'vid', $visitor_id, 'cookie', true );
         }
@@ -279,61 +279,58 @@ class TrackerClient extends OwaClient {
     private function setSessionId( &$event ) {
 
         $is_new_session = $this->isNewSession( $event->get( 'timestamp' ),  $this->getGlobalEventProperty( 'last_req' ) );
-        if ( $is_new_session ) {
+        
+        // if its a new seession based on time or if there is no prior session ID found, make a new session
+        if ( $is_new_session || ! $this->getSessionId() ) {
+	        
 	        sdk::debug("is new session");
+	        
             //set prior_session_id
-            $prior_session_id = $this->state->get('s', 'sid');
+            $prior_session_id = $this->getSessionId();
+            
             if ( ! $prior_session_id ) {
-                $state_store_name = sprintf('%s_%s', $this->getSetting('site_session_param'), $this->site_id);
+	            
+                $state_store_name = sprintf('%s_%s', $this->getSetting('site_session_param'), $this->getSiteId() );
+                
                 $prior_session_id = $this->state->get($state_store_name, 's');
-            }
-            if ($prior_session_id) {
+                
+            } else {
+	            
                 $this->setGlobalEventProperty( 'prior_session_id', $prior_session_id );
             }
 
             $this->resetSessionState();
+			
+			// generate new session id
+            $session_id = $event->getSiteSpecificGuid( $this->getSiteId() );
 
-            $session_id = $event->getSiteSpecificGuid( $this->site_id );
-
-               //mark new session flag on current request
+            //mark new session flag on current request
             $this->setGlobalEventProperty( 'is_new_session', true );
-            $this->state->set( 's', 'sid', $session_id, 'cookie', true );
-
+            
         } else {
+	        
+	        sdk::debug("is existing session");
+	        
             // Must be an active session so just pull the session id from the state store
-            $session_id = $this->state->get('s', 'sid');
+            $session_id = $this->getSessionId();
 
-            // support for old style cookie
-            if ( ! $session_id ) {
-                $state_store_name = sprintf('%s_%s', $this->getSetting('site_session_param'), $this->site_id);
-                $session_id = $this->state->get($state_store_name, 's');
-
-            }
-
-            // fail-safe just in case there is no session_id
-            if ( ! $session_id ) {
-                $session_id = $event->getSiteSpecificGuid( $this->site_id );
-                //mark new session flag on current request
-                $this->setGlobalEventProperty( 'is_new_session', true );
-                sdk::debug('setting failsafe session id');
-            }
         }
 
         // set global event property
-           $this->setGlobalEventProperty( 'session_id', $session_id );
+        $this->setGlobalEventProperty( 'session_id', $session_id );
         // set sid state
         $this->state->set( 's', 'sid', $session_id, 'cookie', true );
+    }
+    
+    public function getSessionId() {
+	    
+	    return $this->state->get('s', 'sid');
     }
 
     private function setLastRequestTime( &$event ) {
 
         $last_req = $this->state->get('s', 'last_req');
 
-        // suppport for old style cookie
-        if ( ! $last_req ) {
-            $state_store_name = sprintf( '%s_%s', $this->getSetting( 'site_session_param' ), $this->site_id );
-            $last_req = $this->state->get( $state_store_name, 'last_req' );
-        }
         // set property on event object
         $this->setGlobalEventProperty( 'last_req', $last_req );
         sdk::debug("setting last_req value of $last_req as global event property.");
@@ -367,14 +364,15 @@ class TrackerClient extends OwaClient {
     }
 
     /**
-     * Logs tracking event
+     * Tracks Event with Full state and globals
      *
-     * This function fires a tracking event that will be processed and then dispatched
+     * This function processes a tracking event by adding full state and global properties to it
+     * Typically used by syncronous events such as Pageviews
      *
      * @param object $event
      * @return boolean
      */
-    public function trackEvent($event) {
+    public function trackEvent( $event ) {
 
         // do not track anything if user is in overlay mode
         if ($this->state->get('overlay')) {
@@ -382,27 +380,43 @@ class TrackerClient extends OwaClient {
         }
 
         $this->setGlobalEventProperty( 'HTTP_REFERER', $this->getServerParam('HTTP_REFERER') );
+        
 		$this->setGlobalEventProperty( 'HTTP_USER_AGENT', $this->getServerParam('HTTP_USER_AGENT') );
-
-        // needed by helper page tags function so it can append to first hit tag url
-        if (!$this->getSiteId()) {
-            $this->setSiteId($event->get('site_id'));
-        }
-		
-		// is this needed?
-        if (!$this->getSiteId()) {
-            $this->setSiteId( $_GET['site_id'] );
-        }
 
         // set various state properties.
         $this->manageState( $event );
 
         $event = $this->setAllGlobalEventProperties( $event );
 
-        // send event to log API for processing.
+        // log event to server
         return $this->logEvent($event->getEventType(), $event);
     }
-
+    
+    /**
+     * Tracks Event without state or globals
+     *
+     * This function processes a raw tracking event without any state or globals added to it
+     * Typically used by asyncronous events such as Delayed commerce transactions or programaticly derived events
+     *
+     * @param object $event
+     * @return boolean
+     */
+    public function trackStatelessEvent( $event ) {
+	    
+	    $event->set( 'site_id', $this->getSiteId() );
+	    
+	    // log event to server.
+        return $this->logEvent( $event->getEventType(), $event );
+    }
+	
+	/**
+     * Add Global properties to Tracking Event
+     *
+     * This function add global properties to the tracking event
+     *
+     * @param object $event
+     * @return $event
+     */
     public function setAllGlobalEventProperties( $event ) {
 
         if ( ! $event->get('site_id') ) {
@@ -491,11 +505,10 @@ class TrackerClient extends OwaClient {
         $this->commerce_event->set( 'country', $country );
         $this->commerce_event->set( 'state', $state );
         $this->commerce_event->set( 'city', $city );
+        
         if ( $session_id ) {
+            
             $this->commerce_event->set( 'original_session_id', $session_id );
-            // tells the client to NOT manage state properties as we are
-            // going to look them up from the session later.
-            $this->commerce_event->set( 'is_state_set', true );
         }
     }
 
@@ -531,7 +544,15 @@ class TrackerClient extends OwaClient {
     public function trackTransaction() {
 
         if ( ! empty( $this->commerce_event ) ) {
-            $this->trackEvent( $this->commerce_event );
+	        
+	        if ( $this->commerce_event->get( 'original_session_id' ) ) {
+		        
+		    	$this->trackStatelessEvent( $this->commerce_event );
+		    	    
+	        } else {
+            
+            	$this->trackEvent( $this->commerce_event );
+            }
             $this->commerce_event = '';
         }
     }
@@ -1170,7 +1191,7 @@ class TrackerClient extends OwaClient {
 	    return new TrackingEvent;
     }
     
-    function setSiteId($site_id) {
+    function setSiteId( $site_id ) {
         
         $this->site_id = $site_id;
     }
