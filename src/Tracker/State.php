@@ -367,7 +367,9 @@ class State {
         if ( !$this->getSetting( 'cookie_persistence' ) ) {
             $expires = 0;
         }
-
+		
+		$path .= '; SameSite=lax';
+		
         setcookie($cookie_name, $cookie_value, $expires, $path, $domain);
     }
 
