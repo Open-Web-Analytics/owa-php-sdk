@@ -15,7 +15,7 @@
     },
     
     "require": {
-        "guzzlehttp/guzzle": "6.5.3",
+        "guzzlehttp/guzzle": "^7.0.1",
         "symfony/polyfill-intl-idn": "1.15",
         "symfony/polyfill-mbstring": "1.20.0"
     },
