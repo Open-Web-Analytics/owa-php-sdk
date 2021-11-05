@@ -135,11 +135,90 @@ class OwaClient {
 		    
 		    $url .= '?' . http_build_query( $request['query'] );
 	    }
+		
+		// get the current time zone
+		$tz = date_default_timezone_get();
+		
+		// switch to UTC for signature check
+		date_default_timezone_set('UTC');
+		
+		// generate date
+	    $date = date( 'Ymd', time() );
 	    
-	    $date = date( 'Ymd' );
-	    
+		// return the time zone to prior state
+		date_default_timezone_set($tz);
+	   
 	    return base64_encode( hash('sha256', 'OWASIGNATURE' . $credentials['api_key'] . $url . $date . $credentials['auth_key'] ) );
 	}
+	
+	public function makeRequest( $params ) {
+	    
+	    $conf = [
+			
+			'base_uri' => $this->getSetting('instance_url')
+		];
+	    
+	    $http = $this->getHttpClient( $conf );
+	    
+	    $uri = $this->getSetting('endpoint') . $params['uri'];
+	    
+	    $request_options = [];
+	    
+	    if ( array_key_exists('query', $params) && $params[ 'query' ] )  {
+		    
+			 $request_options[ 'query' ] = $params[ 'query' ];
+	    }
+	    
+	    if ( array_key_exists('form_params', $params) && $params[ 'form_params' ] )  {
+		    
+			 $request_options[ 'form_params' ] = $this->ns( $params[ 'form_params' ] );
+	    }
+	    
+	    $credentials = $this->getCredentials();
+	    
+	    $request_options[ 'headers' ] = [
+		    
+		    'X-SIGNATURE' => $this->generateRequestSignature( $params, $credentials ),
+		    'X-API-KEY' => $credentials['api_key']
+		    
+	    ];
+	    
+	    $res = $http->request( $params['http_method'], $uri, $request_options );
+	    
+	    return $res;
+    }
+    
+    public static function setDefaultParams( $defaults, $params ) {
+	    
+	    if ( is_array( $defaults ) && is_array( $params ) ) {
+	    
+	    	return array_merge( $defaults, array_filter( $params ) );
+	    }
+    }
+    
+    public function ns( $value ) {
+	    
+	    $ns = $this->getSetting('ns');
+	    
+	    if ( is_array( $value ) ) {
+		    
+		    $new = [];
+		    
+		    foreach ( $value as $k => $v ) {
+			    
+			    $new[ $ns . $k ] = $v;
+			    
+		    }
+		    
+		    return $new;
+	    }
+	    
+	    if ( is_string( $value ) ) {
+		    
+		    return $ns . trim( $value );
+	    }
+    }
+    
 }	
 	
 ?>

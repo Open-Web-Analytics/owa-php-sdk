@@ -39,40 +39,30 @@ class SitesClient extends OwaClient {
 	    return $this->makeRequest( $request );
     }
     
-    private function makeRequest( $params ) {
+    public function addSite( $params ) {
 	    
-	    $conf = [
-			
-			'base_uri' => $this->getSetting('instance_url')
-		];
-		
-		print_r( $conf );
-	    
-	    $http = $this->getHttpClient( $conf );
-	    
-	    $uri = $this->getSetting('endpoint') . $params['uri'];
-	    
-	    $request_options = [];
-	    
-	    if ( array_key_exists('query', $params) && $params[ 'query' ] )  {
+	    $defaults = [
 		    
-			 $request_options[ 'query' ] = $params[ 'query' ];
-	    }
-	    
-	    $credentials = $this->getCredentials();
-	    
-	    $request_options[ 'headers' ] = [
-		    
-		    'X-SIGNATURE' => $this->generateRequestSignature( $params, $credentials ),
-		    'X-API-KEY' => $credentials['api_key']
+		    'domain' 		=> '',
+		    'name' 			=> '',
+		    'description' 	=> '',
+		    'site_family'	=> ''
 		    
 	    ];
 	    
-	    $res = $http->request( $params['http_method'], $uri, $request_options );
+	    $params = self::setDefaultParams( $defaults, $params );
+	
 	    
-	    return $res;
-    }
+	    $request = [
+		    
+		    'http_method'	=> 'POST',
+		    'uri' 			=> '/base/v1/sites',
+		    'form_params'	=> $params
+	    ];
 
+	    return $this->makeRequest( $request );
+    }
+    
 }
 
 ?>
