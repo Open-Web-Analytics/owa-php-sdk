@@ -40,7 +40,7 @@ class TrackerClient extends OwaClient {
 
     public function __construct($config = null) {
 
-		$this->config = [
+		$defaults = [
 			
 			'instance_url'						=> '',
 			'visitor_param'                     => 'v',
@@ -63,8 +63,10 @@ class TrackerClient extends OwaClient {
             'cookie_persistence'                => true,  // Controls persistence of cookies, only for use in europe needed
 		];
 		
+		$client_config = array_merge( $defaults, $config );
+		
 		// parent will override the default config with passed values.
-		parent::__construct($config);
+		parent::__construct($client_config);
 		
 		$domain = '';
 

@@ -2,7 +2,8 @@
 
 return [
 	
-	'tracker'	=>	['namespace' => 'Tracker']
+	'tracker'	=>	['namespace' => 'Tracker'],
+	'sites'		=>	['namespace' => 'Sites']
 	
 ];
 
