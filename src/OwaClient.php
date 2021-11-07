@@ -13,7 +13,8 @@ class OwaClient {
 			
 			'instance_url'						=> '',
             'ns'								=> 'owa_',
-            'endpoint'							=> 'api'
+            'endpoint'							=> 'api',
+            'credentials'						=> []
 		];
 		
 		// override default config with config array passed in.
@@ -36,9 +37,7 @@ class OwaClient {
 	
 	public function getCredentials() {
 		
-		static $credentials;
-		
-		if ( empty ( $credentials ) ) {
+		if ( empty ( $this->config['credentials'] ) ) {
 			
 			$credentials = [
 				
@@ -60,8 +59,7 @@ class OwaClient {
 				if ( defined('OWA_API_KEY') ) {
 					
 					$credentials['api_key'] = OWA_API_KEY;
-				}
-				
+				}	
 			}
 			
 			// check environment variables
@@ -78,7 +76,6 @@ class OwaClient {
 					
 					$credentials['auth_key'] = OWA_AUTH_KEY;
 				}
-				
 			}
 			
 			//check credentials file in home dir.
@@ -97,10 +94,11 @@ class OwaClient {
 					}
 				}
 			}
-						
+			
+			$this->config['credentials'] = $credentials;
 		} 
 		
-		return $credentials;
+		return $this->config['credentials'];
 	}
 	
 	private function getHomeDirectory() {
