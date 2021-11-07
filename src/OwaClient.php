@@ -88,7 +88,8 @@ class OwaClient {
 				
 				if ( file_exists( $file ) ){
 					
-					$file_contents = include( $file );
+					$file_contents = parse_ini_file( $file );
+					$file_contents = $file_contents['defaults'];
 					
 					if ( is_array($file_contents) && array_key_exists( 'api_key', $file_contents ) && array_key_exists( 'auth_key', $file_contents )) {
 						
@@ -103,6 +104,7 @@ class OwaClient {
 	}
 	
 	private function getHomeDirectory() {
+		
         // On Unix systems, use the HOME environment variable
         if ($home = getenv( 'HOME' ) ) {
             
