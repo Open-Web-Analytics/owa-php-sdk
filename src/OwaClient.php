@@ -105,14 +105,14 @@ class OwaClient {
 		
         // On Unix systems, use the HOME environment variable
         if ($home = getenv( 'HOME' ) ) {
-            
+           
             return $home;
         }
 
         // Get the HOMEDRIVE and HOMEPATH values for Windows hosts
         $home_drive = getenv('HOMEDRIVE');
         $home_path = getenv('HOMEPATH');
-
+        
         return ($home_drive && $home_path) ? $home_drive . $home_path : null;
     }
 	
