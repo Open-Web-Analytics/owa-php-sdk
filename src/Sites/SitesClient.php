@@ -36,7 +36,11 @@ class SitesClient extends OwaClient {
 		    'uri' 			=> '/base/v1/sites'
 	    ];
 	    
-	    return $this->makeRequest( $request );
+	    $res = $this->makeRequest( $request );
+		
+		return $res;
+		
+	    
     }
     
     public function addSite( $params ) {
@@ -52,7 +56,6 @@ class SitesClient extends OwaClient {
 	    
 	    $params = self::setDefaultParams( $defaults, $params );
 	
-	    
 	    $request = [
 		    
 		    'http_method'	=> 'POST',
@@ -60,7 +63,9 @@ class SitesClient extends OwaClient {
 		    'form_params'	=> $params
 	    ];
 
-	    return $this->makeRequest( $request );
+	    $res = $this->makeRequest( $request );
+	    
+	    return $res;
     }
     
 }

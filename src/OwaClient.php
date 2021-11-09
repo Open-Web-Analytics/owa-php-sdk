@@ -2,10 +2,14 @@
 
 namespace OwaSdk;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\ClientException;
 
 class OwaClient {
 	
 	var $config = [];
+	var $last_response = null;
 	
 	public function __construct( $config ) {
 		
@@ -183,9 +187,91 @@ class OwaClient {
 		    
 	    ];
 	    
-	    $res = $http->request( $params['http_method'], $uri, $request_options );
+	    $res = null;
 	    
-	    return $res;
+	    try{
+		    
+		    $res = $http->request( $params['http_method'], $uri, $request_options );
+		    
+		    
+	    } 
+	    
+	    catch( \GuzzleHttp\Exception\RequestException $e ) {
+		     
+		    $r = $e->getRequest();
+		  	$res = null;
+		  	
+		  	error_log( print_r( $r, true ) );
+		  	
+		  	if ( $e->hasResponse() ) {
+			  	
+			  	$res = $e->getResponse();
+			  	
+			  	error_log( print_r( $res, true ) );
+		  	}
+		  	
+		    if ( $this->getSetting( 'debug' ) ) {
+			 	
+			 	print_r($r);
+			 	print_r($res);   
+			}
+	    }
+	    
+	    catch( \GuzzleHttp\Exception\ConnectException $e ) {
+		    
+		    $r = $e->getRequest();
+		  	$res = null;
+		  	
+		  	error_log( print_r( $r, true ) );
+		  	
+		  	if ( $e->hasResponse() ) {
+			  	
+			  	$res = $e->getResponse();
+			  	
+			  	error_log( print_r( $res, true ) );
+		  	}
+		  	
+		    if ( $this->getSetting( 'debug' ) ) {
+			 	
+			 	print_r($r);
+			 	print_r($res);   
+			}
+	    }
+
+		catch( \GuzzleHttp\Exception\ClientException $e ) {
+		  	
+		  	$r = $e->getRequest();
+		  	$res = null;
+		  	
+		  	error_log( print_r( $r, true ) );
+		  	
+		  	if ( $e->hasResponse() ) {
+			  	
+			  	$res = $e->getResponse();
+			  	
+			  	error_log( print_r( $res, true ) );
+		  	}
+		  	
+		    if ( $this->getSetting( 'debug' ) ) {
+			 	
+			 	print_r($r);
+			 	print_r($res);   
+			}
+	    }
+	    
+	 
+	    if ( $res ) {
+		    
+		    $this->last_response = $res ;
+		
+		    $b =  $res->getBody();
+		    $b = json_decode( $b, true);
+		    
+		    if ( array_key_exists( 'data', $b ) ) {
+			    
+			    return $b['data'];
+		    }
+	    }    
     }
     
     public static function setDefaultParams( $defaults, $params ) {
