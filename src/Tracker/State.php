@@ -430,7 +430,7 @@ class State {
             foreach($raw_cookie_array as $raw_cookie ) {
 
                 $nvp = explode( '=', trim( $raw_cookie ) );
-                $this->cookies[ $nvp[0] ][] = urldecode($nvp[1]);
+                $this->cookies[ $nvp[0] ][] = isset($nvp[1])?urldecode($nvp[1]):'';
             }
 
         } else {
