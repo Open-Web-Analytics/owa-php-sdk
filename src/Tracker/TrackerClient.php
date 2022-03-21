@@ -259,7 +259,7 @@ class TrackerClient extends OwaClient {
         sdk::debug('setting days since last session.', $this->getSetting('debug'));
         $dsps = '';
         if ( $this->getGlobalEventProperty( 'is_new_session' ) ) {
-            sdk::debug( 'timestamp: ' . $event->get( 'timestamp' ) );
+            sdk::debug( 'timestamp: ' . $event->get( 'timestamp' ), $this->getSetting('debug') );
             $last_req = $this->getGlobalEventProperty( 'last_req' );
             if ( ! $last_req ) {
                 $last_req = $event->get( 'timestamp' );
