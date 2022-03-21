@@ -32,7 +32,8 @@ If you find a bug in the SDK, please let us know about it. However, before you c
 ```php
 $config = [
     'instance_url' => 'http://your.domain.com/owa/',
-    'cookie_domain' => 'your.domain.com'
+    'cookie_domain' => 'your.domain.com',
+    'debug' => false,
 ];
 
 $sdk = new OwaSdk\sdk($config);
