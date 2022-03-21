@@ -87,8 +87,12 @@ class sdk {
 		return $config + $this->config;
 	}
 	
-	static function debug( $msg ) {
-		
+	static function debug( $msg, $log ) {
+
+		if(!$log) {
+			return;
+		}
+
 		if ( is_object( $msg ) || is_array( $msg ) ) {
 			
 			$msg = print_r( $msg, true );
