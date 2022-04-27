@@ -196,7 +196,7 @@ class OwaClient {
 		    
 	    } 
 	    
-	    catch( \GuzzleHttp\Exception\RequestException $e ) {
+	    catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException | \GuzzleHttp\Exception\ClientException $e ) {
 		     
 		    $r = $e->getRequest();
 		  	$res = null;
@@ -217,49 +217,6 @@ class OwaClient {
 			}
 	    }
 	    
-	    catch( \GuzzleHttp\Exception\ConnectException $e ) {
-		    
-		    $r = $e->getRequest();
-		  	$res = null;
-		  	
-		  	error_log( print_r( $r, true ) );
-		  	
-		  	if ( $e->hasResponse() ) {
-			  	
-			  	$res = $e->getResponse();
-			  	
-			  	error_log( print_r( $res, true ) );
-		  	}
-		  	
-		    if ( $this->getSetting( 'debug' ) ) {
-			 	
-			 	print_r($r);
-			 	print_r($res);   
-			}
-	    }
-
-		catch( \GuzzleHttp\Exception\ClientException $e ) {
-		  	
-		  	$r = $e->getRequest();
-		  	$res = null;
-		  	
-		  	error_log( print_r( $r, true ) );
-		  	
-		  	if ( $e->hasResponse() ) {
-			  	
-			  	$res = $e->getResponse();
-			  	
-			  	error_log( print_r( $res, true ) );
-		  	}
-		  	
-		    if ( $this->getSetting( 'debug' ) ) {
-			 	
-			 	print_r($r);
-			 	print_r($res);   
-			}
-	    }
-	    
-	 
 	    if ( $res ) {
 		    
 		    $this->last_response = $res ;
