@@ -49,6 +49,7 @@ class State {
 	    $this->initial_state = [];
 	    
 	    $this->initializeStores();
+
     }
 
 	private function getSetting( $name ) {
@@ -79,7 +80,7 @@ class State {
 
     public function get($store, $name = '') {
 
-        sdk::debug("Getting state - store: ".$store.' key: '.$name);
+        sdk::debug("Getting state - store: ".$store.' key: '.$name, $this->getSetting('debug'));
         //owa_coreAPI::debug("existing stores: ".print_r($this->stores, true));
         if ( ! isset($this->stores[$store] ) ) {
             $this->loadState($store);
@@ -107,7 +108,7 @@ class State {
 
     function setState($store, $name, $value, $store_type = '', $is_perminent = false) {
 
-        sdk::debug(sprintf('populating state for store: %s, name: %s, value: %s, store type: %s, is_perm: %s', $store, $name, print_r($value, true), $store_type, $is_perminent));
+        sdk::debug(sprintf('populating state for store: %s, name: %s, value: %s, store type: %s, is_perm: %s', $store, $name, print_r($value, true), $store_type, $is_perminent), $this->getSetting('debug'));
 
         // set values
         if (empty($name)) {
@@ -172,7 +173,7 @@ class State {
 
         //check to see that store exists.
         if ( isset( $this->stores[ $store ] ) ) {
-            sdk::debug('Persisting state store: '. $store . ' with: '. print_r($this->stores[ $store ], true));
+            sdk::debug('Persisting state store: '. $store . ' with: '. print_r($this->stores[ $store ], true), $this->getSetting('debug'));
             // transform state array into a string using proper format
             if ( is_array( $this->stores[$store] ) ) {
                 switch ( $this->stores_meta[$store]['type'] ) {
@@ -202,7 +203,7 @@ class State {
 
         } else {
 
-            sdk::debug("Cannot persist state. No store registered with name $store");
+            sdk::debug("Cannot persist state. No store registered with name $store", $this->getSetting('debug'));
         }
     }
 
@@ -247,14 +248,14 @@ class State {
 
                     // return as the cdh's do not match
                     if ( $cdh_from_state === $runtime_cdh ) {
-                        sdk::debug("cdh match:  $cdh_from_state and $runtime_cdh");
+                        sdk::debug("cdh match:  $cdh_from_state and $runtime_cdh", $this->getSetting('debug'));
                         return $this->setState($store, $name, $value, $store_type);
                     } else {
                         // cookie domains do not match so we need to delete the cookie in the offending domain
                         // which is always likely to be a sub.domain.com and thus HTTP_HOST.
                         // if cookie is not deleted then new cookies set on .domain.com will never be seen by PHP
                         // as only the sub domain cookies are available.
-                        sdk::debug("Not loading state store: $store. Domain hashes do not match - runtime: $runtime_cdh, cookie: $cdh_from_state");
+                        sdk::debug("Not loading state store: $store. Domain hashes do not match - runtime: $runtime_cdh, cookie: $cdh_from_state", $this->getSetting('debug'));
                         //owa_coreAPI::debug("deleting cookie: owa_$store");
                         //owa_coreAPI::deleteCookie($store,'/', $_SERVER['HTTP_HOST']);
                         //unset($this->initial_state[$store]);
@@ -262,14 +263,14 @@ class State {
                     }
                 } else {
 
-                    sdk::debug("Not loading state store: $store. No domain hash found.");
+                    sdk::debug("Not loading state store: $store. No domain hash found.", $this->getSetting('debug'));
                     return;
                 }
 
             } else {
                 // just set the state with the last value
                 if ( $k === $count - 1 ) {
-                    sdk::debug("loading last value in initial state container for store: $store");
+                    sdk::debug("loading last value in initial state container for store: $store", $this->getSetting('debug'));
                     return $this->setState($store, $name, $value, $store_type);
                 }
             }
@@ -361,14 +362,14 @@ class State {
         $cookie_name = sprintf('%s%s', $this->getSetting('ns'), $cookie_name);
 
         // debug
-        sdk::debug(sprintf('Setting cookie %s with values: %s under domain: %s', $cookie_name, $cookie_value, $domain));
+        sdk::debug(sprintf('Setting cookie %s with values: %s under domain: %s', $cookie_name, $cookie_value, $domain), $this->getSetting('debug'));
 
         // makes cookie to session cookie only
         if ( !$this->getSetting( 'cookie_persistence' ) ) {
             $expires = 0;
         }
 		
-		$path .= '; SameSite=lax';
+		//$path .= '; SameSite=lax';
 		
         setcookie($cookie_name, $cookie_value, $expires, $path, $domain);
     }
@@ -430,7 +431,7 @@ class State {
             foreach($raw_cookie_array as $raw_cookie ) {
 
                 $nvp = explode( '=', trim( $raw_cookie ) );
-                $this->cookies[ $nvp[0] ][] = urldecode($nvp[1]);
+                $this->cookies[ $nvp[0] ][] = isset($nvp[1])?urldecode($nvp[1]):'';
             }
 
         } else {

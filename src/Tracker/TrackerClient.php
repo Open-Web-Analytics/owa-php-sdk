@@ -82,7 +82,8 @@ class TrackerClient extends OwaClient {
 		$state_config = [
 			'cookie_domain' 		=> $this->getSetting( 'cookie_domain' ),
 			'ns'					=> $this->getSetting( 'ns' ),
-			'cookie_persistence' 	=> $this->getSetting( 'cookie_persistence' ) 
+			'cookie_persistence' 	=> $this->getSetting( 'cookie_persistence' ) ,
+            'debug'                 => $this->getSetting( 'debug' ),
 		];
 		
 		$this->state = new State($state_config);
@@ -143,6 +144,7 @@ class TrackerClient extends OwaClient {
             ['d' => 'rambler', 'q' => 'words'],
             ['d' => 'duckduckgo', 'q' => 'q'],
         ];
+
     }
 
     public function setPageTitle($value) {
@@ -254,15 +256,15 @@ class TrackerClient extends OwaClient {
 
     private function setDaysSinceLastSession( &$event ) {
 
-        sdk::debug('setting days since last session.');
+        sdk::debug('setting days since last session.', $this->getSetting('debug'));
         $dsps = '';
         if ( $this->getGlobalEventProperty( 'is_new_session' ) ) {
-            sdk::debug( 'timestamp: ' . $event->get( 'timestamp' ) );
+            sdk::debug( 'timestamp: ' . $event->get( 'timestamp' ), $this->getSetting('debug') );
             $last_req = $this->getGlobalEventProperty( 'last_req' );
             if ( ! $last_req ) {
                 $last_req = $event->get( 'timestamp' );
             }
-            sdk::debug( 'last_req: ' . $last_req );
+            sdk::debug( 'last_req: ' . $last_req, $this->getSetting('debug') );
             $dsps = round( ( $event->get( 'timestamp' ) - $last_req ) / ( 3600*24 ) );
             $this->state->set('s', 'dsps', $dsps , 'cookie', true);
         }
@@ -285,7 +287,7 @@ class TrackerClient extends OwaClient {
         // if its a new seession based on time or if there is no prior session ID found, make a new session
         if ( $is_new_session || ! $this->getSessionId() ) {
 	        
-	        sdk::debug("is new session");
+	        sdk::debug("is new session", $this->getSetting('debug'));
 	        
             //set prior_session_id
             $prior_session_id = $this->getSessionId();
@@ -311,7 +313,7 @@ class TrackerClient extends OwaClient {
             
         } else {
 	        
-	        sdk::debug("is existing session");
+	        sdk::debug("is existing session", $this->getSetting('debug'));
 	        
             // Must be an active session so just pull the session id from the state store
             $session_id = $this->getSessionId();
@@ -335,7 +337,7 @@ class TrackerClient extends OwaClient {
 
         // set property on event object
         $this->setGlobalEventProperty( 'last_req', $last_req );
-        sdk::debug("setting last_req value of $last_req as global event property.");
+        sdk::debug("setting last_req value of $last_req as global event property.", $this->getSetting('debug'));
         // store new state value
         $this->state->set( 's', 'last_req', $event->get( 'timestamp' ), 'cookie', true );
     }
@@ -356,11 +358,11 @@ class TrackerClient extends OwaClient {
         $time_since_lastreq = $timestamp - $last_req;
         $len = $this->getSetting( 'session_length' );
         if ( $time_since_lastreq < $len ) {
-            sdk::debug("This request is part of an active session.");
+            sdk::debug("This request is part of an active session.", $this->getSetting('debug'));
             return false;
         } else {
             //NEW SESSION. prev session expired, because no requests since some time.
-            sdk::debug("This request is the start of a new session. Prior session expired.");
+            sdk::debug("This request is the start of a new session. Prior session expired.", $this->getSetting('debug'));
             return true;
         }
     }
@@ -649,7 +651,7 @@ class TrackerClient extends OwaClient {
             //$campaign_properties['ts'] = $event->get('timestamp');
         }
 
-        sdk::debug('campaign properties: '. print_r($campaign_properties, true));
+        sdk::debug('campaign properties: '. print_r($campaign_properties, true), $this->getSetting('debug'));
 
         return $campaign_properties;
     }
@@ -712,7 +714,7 @@ class TrackerClient extends OwaClient {
             if (!empty($campaign_properties)) {
                 // add timestamp
                 //$campaign_properties['ts'] = $event->get('timestamp');
-                sdk::debug('Setting original Campaign attrbution.');
+                sdk::debug('Setting original Campaign attrbution.', $this->getSetting('debug'));
                 $campaign_state[] = $campaign_properties;
                 // set cookie
                 $this->setCampaignCookie($campaign_state);
@@ -749,15 +751,15 @@ class TrackerClient extends OwaClient {
         switch ( $model ) {
 
             case 'direct':
-                sdk::debug( 'Applying "Direct" Traffic Attribution Model' );
+                sdk::debug( 'Applying "Direct" Traffic Attribution Model' , $this->getSetting('debug'));
                 $this->directAttributionModel( $campaign_properties );
                 break;
             case 'original':
-                sdk::debug( 'Applying "Original" Traffic Attribution Model' );
+                sdk::debug( 'Applying "Original" Traffic Attribution Model' , $this->getSetting('debug'));
                 $this->originalAttributionModel( $campaign_properties );
                 break;
             default:
-                sdk::debug( 'Applying Default (Direct) Traffic Attribution Model' );
+                sdk::debug( 'Applying Default (Direct) Traffic Attribution Model', $this->getSetting('debug') );
                 $this->directAttributionModel( $campaign_properties );
         }
 
@@ -765,13 +767,13 @@ class TrackerClient extends OwaClient {
         // set attribution properties on the event object
         if ( $this->isTrafficAttributed ) {
 
-            sdk::debug( 'Attributing Traffic to: %s', print_r($campaign_properties, true ) );
+            sdk::debug( 'Attributing Traffic to: %s', print_r($campaign_properties, true ), $this->getSetting('debug') );
 
         } else {
             // infer the attribution from the referer
             // if the request is the start of a new session
             if ( $this->getGlobalEventProperty( 'is_new_session' ) ) {
-                sdk::debug( 'Inferring traffic attribution.' );
+                sdk::debug( 'Inferring traffic attribution.', $this->getSetting('debug') );
                 $this->inferTrafficAttribution();
             }
         }
@@ -860,7 +862,7 @@ class TrackerClient extends OwaClient {
                 $term = $uri['query_params'][$query_param];
             }
 
-            sdk::debug( 'Found search engine: %s with query param %s:, query term: %s', $domain, $query_param, $term);
+            sdk::debug( sprintf('Found search engine: %s with query param %s:, query term: %s', $domain, $query_param, $term), $this->getSetting('debug'));
 
             $searchEngine = ['d' => $domain, 'q' => $query_param, 't' => $term];
             break;
@@ -897,7 +899,7 @@ class TrackerClient extends OwaClient {
         $cv_param_value = $name . '=' . $value;
 
         if ( strlen( $cv_param_value ) > 65 ) {
-            sdk::debug('Custom variable name + value is too large. Must be less than 64 characters.');
+            sdk::debug('Custom variable name + value is too large. Must be less than 64 characters.', $this->getSetting('debug'));
             return;
         }
 
@@ -907,7 +909,7 @@ class TrackerClient extends OwaClient {
 
                 // store in session cookie
                 $this->state->set( 'b', $cv_param_name, $cv_param_value );
-                sdk::debug( 'just set custom var on session.' );
+                sdk::debug( 'just set custom var on session.', $this->getSetting('debug') );
                 break;
 
             case 'visitor':
@@ -951,7 +953,7 @@ class TrackerClient extends OwaClient {
         // clear page level
         $this->deleteGlobalEventProperty( $cv_param_name );
 
-        sdk::debug("Deleting custom variable named $cv_param_name in slot $slot.");
+        sdk::debug("Deleting custom variable named $cv_param_name in slot $slot.", $this->getSetting('debug'));
     }
 
     private function resetSessionState() {
@@ -1015,9 +1017,9 @@ class TrackerClient extends OwaClient {
             }
 
             $this->setSetting( 'cookie_domain', $domain );
-            sdk::debug("Setting cookie domain to $domain");
+            sdk::debug("Setting cookie domain to $domain", $this->getSetting('debug'));
          } else {
-             sdk::debug("Not setting cookie domain as $domain is not a FQDN.");
+             sdk::debug("Not setting cookie domain as $domain is not a FQDN.", $this->getSetting('debug'));
          }
      }
      
@@ -1147,7 +1149,7 @@ class TrackerClient extends OwaClient {
 
 	private function logEvent($event_type, $event) {
 		
-		sdk::debug('implement logEvent method');
+		sdk::debug('implement logEvent method', $this->getSetting('debug'));
 
 		$conf = [
 			
