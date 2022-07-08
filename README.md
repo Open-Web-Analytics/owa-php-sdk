@@ -23,7 +23,7 @@ If you find a bug in the SDK, please let us know about it. However, before you c
 
 - **Install the SDK with composer** - composer require open-web-analytics/owa-php-sdk
 
-- **User Guide** - reead the [user guide](https://github.com/Open-Web-Analytics/owa-php-sdk/wiki) in order to lear how to work wit hthe SDK.
+- **User Guide** - read the [user guide](https://github.com/Open-Web-Analytics/owa-php-sdk/wiki) in order to learn how to work wit the SDK.
 
 ## Quick Example
 
