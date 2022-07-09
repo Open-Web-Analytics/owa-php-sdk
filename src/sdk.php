@@ -13,6 +13,8 @@ class sdk {
 	
 	private $config;
 	
+	public static $inDebug;
+	
 	public function __construct( $config = [] ) {
 		
 		$this->config = $config;
@@ -22,6 +24,7 @@ class sdk {
 			ini_set('display_errors', 1);
 			error_reporting( -1 );
 			
+			self::$inDebug = true;
 			
 		}
 	}
@@ -89,12 +92,15 @@ class sdk {
 	
 	static function debug( $msg ) {
 		
-		if ( is_object( $msg ) || is_array( $msg ) ) {
-			
-			$msg = print_r( $msg, true );
-		}
+		if ( self::$inDebug ) {
 		
-		error_log( $msg . "\n", 3, "./errors.log" );
+			if ( is_object( $msg ) || is_array( $msg ) ) {
+				
+				$msg = print_r( $msg, true );
+			}
+			
+			error_log( $msg . "\n", 3, "./errors.log" );
+		}
 	}
 
 }

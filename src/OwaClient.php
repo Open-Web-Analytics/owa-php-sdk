@@ -18,7 +18,8 @@ class OwaClient {
 			'instance_url'						=> '',
             'ns'								=> 'owa_',
             'endpoint'							=> 'api',
-            'credentials'						=> []
+            'credentials'						=> [],
+            'debug'								=> false
 		];
 		
 		// override default config with config array passed in.
@@ -159,10 +160,13 @@ class OwaClient {
 	    
 	    $conf = [
 			
-			'base_uri' => $this->getSetting('instance_url')
+			'base_uri' => $this->getSetting('instance_url'),
+			
 		];
 	    
 	    $http = $this->getHttpClient( $conf );
+	    
+	    //$http->setUserAgent('OWA SDK Client', true);
 	    
 	    $uri = $this->getSetting('endpoint') . $params['uri'];
 	    
@@ -183,7 +187,8 @@ class OwaClient {
 	    $request_options[ 'headers' ] = [
 		    
 		    'X-SIGNATURE' => $this->generateRequestSignature( $params, $credentials ),
-		    'X-API-KEY' => $credentials['api_key']
+		    'X-API-KEY' => $credentials['api_key'],
+		    'User-Agent' => 'OWA SDK Client'
 		    
 	    ];
 	    
@@ -222,12 +227,16 @@ class OwaClient {
 		    $this->last_response = $res ;
 		
 		    $b =  $res->getBody();
-		    $b = json_decode( $b, true);
 		    
-		    if ( array_key_exists( 'data', $b ) ) {
+		    if ( $b ) {
 			    
-			    return $b['data'];
-		    }
+			    $b = json_decode( $b, true);
+			    
+			    if ( $b && array_key_exists( 'data', $b ) ) {
+				    
+				    return $b['data'];
+			    }
+			}
 	    }    
     }
     
