@@ -188,7 +188,8 @@ class OwaClient {
 		    
 		    'X-SIGNATURE' => $this->generateRequestSignature( $params, $credentials ),
 		    'X-API-KEY' => $credentials['api_key'],
-		    'User-Agent' => 'OWA SDK Client'
+		    'User-Agent' => 'OWA SDK Client',
+			'accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9'
 		    
 	    ];
 	    
@@ -201,7 +202,7 @@ class OwaClient {
 		    
 	    } 
 	    
-	    catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException | \GuzzleHttp\Exception\ClientException $e ) {
+	    catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException |  \GuzzleHttp\Exception\ClientException $e ) {
 		     
 		    $r = $e->getRequest();
 		  	$res = null;
