@@ -1172,11 +1172,37 @@ class TrackerClient extends OwaClient {
 		
 		$params = $this->applyNamespaceToKeys( $params );
 		
-		$res = $http->request(
-			'GET', 'log.php', 
-			['query' => $params ] 
-		);
-		
+        try {
+		    $res = $http->request(
+			    'GET', 'log.php', 
+			    [
+                    'query' => $params,
+                    'headers' => [
+                        'User-Agent' => 'OWA SDK Client',
+                        'accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9'
+                    ]
+                ] 
+		    );
+		} catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException | \GuzzleHttp\Exception\ClientException $e ) {
+            
+            $r = $e->getRequest();
+              $res = null;
+              
+              error_log( print_r( $r, true ) );
+              
+              if ( $e->hasResponse() ) {
+                  
+                  $res = $e->getResponse();
+                  
+                  error_log( print_r( $res, true ) );
+              }
+              
+            if ( $this->getSetting( 'debug' ) ) {
+                 
+                 print_r($r);
+                 print_r($res);   
+            }
+        }
 		return $res;
 	}
 	

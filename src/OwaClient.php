@@ -203,7 +203,7 @@ class OwaClient {
 		    
 	    } 
 	    
-	    catch( RequestException | ConnectException | ClientException $e ) {
+	    catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException | \GuzzleHttp\Exception\ClientException $e ) {
 		     
 		    $r = $e->getRequest();
 		  	$res = null;

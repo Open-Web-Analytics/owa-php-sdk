@@ -35,7 +35,7 @@ class State {
 			'cookie_domain' => ''
 		];
 		
-		// merge incomming config params
+		// merge incoming config params
 		$this->config = array_merge( $this->config, $config );
 		
 		
@@ -346,7 +346,11 @@ class State {
     }
     
     private function createCookie($cookie_name, $cookie_value, $expires = 0, $path = '/', $domain = '') {
-
+        
+        $samesite = 'lax';
+        $secure = false;
+        $httponly = false;
+        
         if (! $domain ) {
             
             $domain = $this->getSetting( 'cookie_domain' );
@@ -364,13 +368,28 @@ class State {
         sdk::debug(sprintf('Setting cookie %s with values: %s under domain: %s', $cookie_name, $cookie_value, $domain));
 
         // makes cookie to session cookie only
-        if ( !$this->getSetting( 'cookie_persistence' ) ) {
+        if ( ! $this->getSetting( 'cookie_persistence' ) ) {
             $expires = 0;
         }
-		
-		$path .= '; SameSite=lax';
-		
-        setcookie($cookie_name, $cookie_value, $expires, $path, $domain);
+        
+        // check for php version to set samesite attribute.
+        //php 7.2
+        if (PHP_VERSION_ID < 70300) {
+    
+            $path .= '; SameSite='.$samesite;            
+            setcookie($cookie_name, $cookie_value, $expires, $path, $domain);    
+        
+        } else {
+            //php 7.3+
+            setcookie($cookie_name, $cookie_value, [
+                'expires' => $expires,
+                'path' => $path,
+                'domain' => $domain,
+                'samesite' => $samesite,
+                'secure' => $secure,
+                'httponly' => $httponly,
+            ]);
+        }
     }
 
     private function deleteCookie($cookie_name, $path = '/', $domain = '') {
