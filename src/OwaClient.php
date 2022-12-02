@@ -2,6 +2,7 @@
 
 namespace OwaSdk;
 use GuzzleHttp\Client;
+use GuzzleHttp\Psr7;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\ClientException;
@@ -202,7 +203,7 @@ class OwaClient {
 		    
 	    } 
 	    
-	    catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException |  \GuzzleHttp\Exception\ClientException $e ) {
+	    catch( RequestException | ConnectException | ClientException $e ) {
 		     
 		    $r = $e->getRequest();
 		  	$res = null;

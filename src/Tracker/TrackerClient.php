@@ -462,6 +462,18 @@ class TrackerClient extends OwaClient {
         }
         return $this->trackEvent($this->pageview_event);
     }
+    
+    public function trackSyndicationFeed( $feed_format = 'rss', $feed_subscription_id = '') {
+        
+        $event = $this->makeEvent();
+        
+        $event->setEventType('base.feed_request');
+        $event->set( 'feed_format', $feed_format );
+        $event->set( 'feed_subscription_id', $feed_subscription_id );
+       
+        // track
+        return $this->trackEvent( $event );	
+    }
 
     public function trackAction($action_name, $action_group = '', $action_label = '', $numeric_value = 0) {
 
