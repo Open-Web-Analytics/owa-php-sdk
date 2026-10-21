@@ -1,4 +1,4 @@
-<?php 
+<?php
 
 namespace OwaSdk\Tracker;
 use OwaSdk\sdk as sdk;
@@ -11,504 +11,610 @@ use OwaSdk\sdk as sdk;
 
 /**
  * State Store Class
- * 
- * @author      Peter Adams <peter@openwebanalytics.com> 
+ *
+ * Reads and writes the same cookies as the OWA 1.14 JavaScript tracker
+ * (modules/Base/src/common/StateManager.js), so a visitor tracked by both
+ * keeps one visitor id and one session.
+ *
+ * Cookie contract:
+ *   - name: <ns><store>, e.g. owa_v, owa_c, owa_s_<siteId>
+ *   - value: JSON object, encoded with JavaScript escape() semantics
+ *   - every object carries 'sv' (store version) and 'cdh' (cookie domain hash)
+ *   - a cookie with a newer 'sv', or a missing or foreign 'cdh', is ignored
+ *   - legacy 'k=>v|||k=>v' values are still read and rewritten as JSON
+ *
+ * @author      Peter Adams <peter@openwebanalytics.com>
  */
-
-
 class State {
-	
-	private $config;
-    private $stores;
-    private $stores_meta;
-    private $is_dirty;
-    private $dirty_stores;
-    private $default_store_type;
-    private $stores_with_cdh;
-    private $initial_state;
-    private $cookies;
 
-    function __construct( $config = []) {
-		
-		$this->config = [
-			
-			'cookie_domain' => ''
-		];
-		
-		// merge incoming config params
-		$this->config = array_merge( $this->config, $config );
-		
-		
-        $this->cookies = [];
-		$this->stores = [];
-	    $this->stores_meta = [];
-	    $this->is_dirty;
-	    $this->dirty_stores;
-	    $this->default_store_type = 'cookie';
-	    $this->stores_with_cdh = [];
-	    $this->initial_state = [];
-	    
-	    $this->initializeStores();
-    }
+    const STORE_VERSION = 1;
 
-	private function getSetting( $name ) {
-		
-		if ( array_key_exists( $name, $this->config ) ) {
-			
-			return $this->config[ $name ];
-		}
+    private array $config;
 
-	}
+    /** @var array<string, array<string, mixed>|string> in-memory stores */
+    private array $stores = [];
 
-    function registerStore( $name, $expiration, $length = '', $format = 'json', $type = 'cookie', $cdh = null ) {
+    /** @var array<string, array{days: int|float|null, deferred: bool, persist: bool}> */
+    private array $meta = [];
 
-        $this->stores_meta[$name] = array(
-            'expiration'     => $expiration,
-            'length'         => $length,
-            'format'         => $format,
-            'type'             => $type,
-            'cdh_required'     => $cdh
+    /** @var array<string, true> stores whose cookie has been merged into memory */
+    private array $loaded = [];
+
+    /** @var array<string, list<string>> raw cookie values by full name, in header order */
+    private array $cookies;
+
+    /** @var callable(string, string, array): void */
+    private $cookieWriter;
+
+    /**
+     * @param array $config cookie_domain, ns, cookie_persistence, cookie_secure, hash_cookies_to_domain
+     * @param array<string, list<string>|string>|null $cookies raw (still escaped) values by cookie name, one or a list of duplicates; null reads the request
+     * @param callable|null $cookieWriter fn( string $name, string $raw_value, array $options ); null uses setrawcookie()
+     */
+    public function __construct( array $config = [], ?array $cookies = null, ?callable $cookieWriter = null ) {
+
+        $this->config = array_merge( [
+            'cookie_domain'          => '',
+            'ns'                     => 'owa_',
+            'cookie_persistence'     => true,
+            'cookie_secure'          => null,
+            'hash_cookies_to_domain' => true,
+        ], $config );
+
+        $this->cookies = array_map(
+            fn( $v ) => is_array( $v ) ? array_values( $v ) : [ (string) $v ],
+            $cookies ?? self::readRequestCookies()
         );
-
-        if ( $cdh ) {
-            $this->stores_with_cdh[] = $name;
-        }
+        $this->cookieWriter = $cookieWriter ?? [ self::class, 'sendCookie' ];
     }
 
+    public function getSetting( string $name ): mixed {
 
-
-    public function get($store, $name = '') {
-
-        sdk::debug("Getting state - store: ".$store.' key: '.$name);
-        //owa_coreAPI::debug("existing stores: ".print_r($this->stores, true));
-        if ( ! isset($this->stores[$store] ) ) {
-            $this->loadState($store);
-        }
-
-        if (array_key_exists($store, $this->stores)) {
-
-            if (!empty($name)) {
-                // check to ensure this is an array, could be a string.
-                if (is_array($this->stores[$store]) && array_key_exists($name, $this->stores[$store])) {
-
-                    return $this->stores[$store][$name];
-                } else {
-                    return false;
-                }
-            } else {
-
-                return $this->stores[$store];
-            }
-        } else {
-
-            return false;
-        }
+        return $this->config[ $name ] ?? null;
     }
 
-    function setState($store, $name, $value, $store_type = '', $is_perminent = false) {
+    public function setSetting( string $name, mixed $value ): void {
 
-        sdk::debug(sprintf('populating state for store: %s, name: %s, value: %s, store type: %s, is_perm: %s', $store, $name, print_r($value, true), $store_type, $is_perminent));
-
-        // set values
-        if (empty($name)) {
-            $this->stores[$store] = $value;
-            //owa_coreAPI::debug('setstate: '.print_r($this->stores, true));
-        } else {
-            //just in case the store was set first as a string instead of as an array.
-            if ( array_key_exists($store, $this->stores)) {
-
-                if ( ! is_array( $this->stores[$store] ) ) {
-                    $new_store = array();
-                    // check to see if we need ot ad a cdh
-                    if ( $this->isCdhRequired($store) ) {
-                        $new_store['cdh'] = $this->getCookieDomainHash();
-                    }
-
-                    $new_store[$name] = $value;
-                    $this->stores[$store] = $new_store;
-
-                } else {
-                    $this->stores[$store][$name] = $value;
-                }
-            // if the store does not exist then    maybe add a cdh and the value
-            } else {
-
-                if ( $this->isCdhRequired($store) ) {
-                    $this->stores[$store]['cdh'] = $this->getCookieDomainHash();
-                }
-
-                $this->stores[$store][$name] = $value;
-            }
-
-        }
-
-        $this->dirty_stores[] = $store;
-        //owa_coreAPI::debug(print_r($this->stores, true));
+        $this->config[ $name ] = $value;
     }
 
-    function isCdhRequired($store_name) {
+    /**
+     * @param int|float|null $days cookie lifetime; null makes a session cookie
+     * @param bool $deferred the cookie is not merged on first read and not written on set;
+     *                       the owner calls settle() and persist() (the JS session store)
+     * @param bool $persist false keeps the store in memory only
+     */
+    public function registerStore( string $name, int|float|null $days, bool $deferred = false, bool $persist = true ): void {
 
-        if ( isset( $this->stores_meta[$store_name] ) ) {
-            return $this->stores_meta[$store_name]['cdh_required'];
-        }
+        $this->meta[ $name ] = [ 'days' => $days, 'deferred' => $deferred, 'persist' => $persist ];
     }
 
-    function set($store, $name, $value, $store_type = '', $is_perminent = false) {
+    public function isRegistered( string $name ): bool {
 
-        if ( ! isset($this->stores[$store] ) ) {
-            $this->loadState($store);
-        }
-
-        $this->setState($store, $name, $value, $store_type, $is_perminent);
-
-        // persist immeadiately if the store type is cookie
-        if ($this->stores_meta[$store]['type'] === 'cookie') {
-
-            $this->persistState($store);
-        }
+        return isset( $this->meta[ $name ] );
     }
 
-    function persistState( $store ) {
+    /**
+     * Value of one key, or the whole store when $key is empty. Null when absent.
+     */
+    public function get( string $store, string $key = '' ): mixed {
 
-        //check to see that store exists.
-        if ( isset( $this->stores[ $store ] ) ) {
-            sdk::debug('Persisting state store: '. $store . ' with: '. print_r($this->stores[ $store ], true));
-            // transform state array into a string using proper format
-            if ( is_array( $this->stores[$store] ) ) {
-                switch ( $this->stores_meta[$store]['type'] ) {
+        $this->load( $store );
 
-                    case 'cookie':
+        if ( ! array_key_exists( $store, $this->stores ) ) {
 
-                        // check for old style assoc format
-                        // @todo eliminiate assoc style cookie format.
-                        if ( $this->stores_meta[$store]['format'] === 'assoc' ) {
-                            $cookie_value = $this->implode_assoc('=>', '|||', $this->stores[ $store ] );
-                        } else {
-                            $cookie_value = json_encode( $this->stores[ $store ] );
-                        }
-
-                        break;
-
-                    default:
-
-                }
-            } else {
-                $cookie_value = $this->stores[ $store ];
-            }
-            // get expiration time
-            $time = $this->stores_meta[$store]['expiration'];
-            //set cookie
-            $this->createCookie( $store, $cookie_value, $time, "/", $this->getSetting( 'cookie_domain' ) );
-
-        } else {
-
-            sdk::debug("Cannot persist state. No store registered with name $store");
+            return null;
         }
+
+        if ( $key === '' ) {
+
+            return $this->stores[ $store ];
+        }
+
+        return is_array( $this->stores[ $store ] ) ? ( $this->stores[ $store ][ $key ] ?? null ) : null;
     }
 
-    function setInitialState($store, $value, $store_type = '') {
+    /**
+     * What the cookie holds, without merging it into memory.
+     */
+    public function getPersisted( string $store, string $key = '' ): mixed {
 
-        if ($value) {
-            $this->initial_state[$store] = $value;
+        $value = $this->readPersisted( $store );
+
+        if ( $key === '' ) {
+
+            return $value;
         }
+
+        return is_array( $value ) ? ( $value[ $key ] ?? null ) : null;
     }
 
-    function loadState($store, $name = '', $value = '', $store_type = 'cookie') {
+    public function set( string $store, string $key, mixed $value ): void {
 
-        //get possible values
-        if ( ! $value && isset( $this->initial_state[$store] ) ) {
-            $possible_values = $this->initial_state[$store];
-        } else {
+        $this->load( $store );
+
+        if ( ! isset( $this->stores[ $store ] ) || ! is_array( $this->stores[ $store ] ) ) {
+
+            $this->stores[ $store ] = [];
+        }
+
+        $this->stores[ $store ][ $key ] = $value;
+
+        $this->autoPersist( $store );
+    }
+
+    /**
+     * Replaces a whole store.
+     *
+     * @param array<string, mixed>|string $value
+     */
+    public function replace( string $store, array|string $value ): void {
+
+        $this->loaded[ $store ] = true;
+        $this->stores[ $store ] = $value;
+
+        $this->autoPersist( $store );
+    }
+
+    /**
+     * Removes one key, or the whole store and its cookie when $key is empty.
+     */
+    public function clear( string $store, string $key = '' ): void {
+
+        $this->load( $store );
+
+        if ( $key === '' ) {
+
+            unset( $this->stores[ $store ] );
+            $this->loaded[ $store ] = true;
+            $this->erase( $store );
             return;
         }
 
+        if ( isset( $this->stores[ $store ] ) && is_array( $this->stores[ $store ] ) && array_key_exists( $key, $this->stores[ $store ] ) ) {
 
-        //count values
-        $count = count($possible_values);
-        // loop throught values looking for a domain hash match or just using the last value.
-        foreach ($possible_values as $k => $value) {
-            // check format of value
-
-            if ( strpos( $value, "|||" ) ) {
-                $value = $this->assocFromString($value);
-            } elseif ( strpos( $value, ":" ) ) {
-                $value = json_decode($value);
-                $value = (array) $value;
-            } else {
-                $value = $value;
-            }
-
-            if ( in_array( $store, $this->stores_with_cdh ) ) {
-
-                if ( is_array( $value ) && isset( $value['cdh'] ) ) {
-
-                    $runtime_cdh = $this->getCookieDomainHash();
-                    $cdh_from_state = $value['cdh'];
-
-                    // return as the cdh's do not match
-                    if ( $cdh_from_state === $runtime_cdh ) {
-                        sdk::debug("cdh match:  $cdh_from_state and $runtime_cdh");
-                        return $this->setState($store, $name, $value, $store_type);
-                    } else {
-                        // cookie domains do not match so we need to delete the cookie in the offending domain
-                        // which is always likely to be a sub.domain.com and thus HTTP_HOST.
-                        // if cookie is not deleted then new cookies set on .domain.com will never be seen by PHP
-                        // as only the sub domain cookies are available.
-                        sdk::debug("Not loading state store: $store. Domain hashes do not match - runtime: $runtime_cdh, cookie: $cdh_from_state");
-                        //owa_coreAPI::debug("deleting cookie: owa_$store");
-                        //owa_coreAPI::deleteCookie($store,'/', $_SERVER['HTTP_HOST']);
-                        //unset($this->initial_state[$store]);
-                        //return;
-                    }
-                } else {
-
-                    sdk::debug("Not loading state store: $store. No domain hash found.");
-                    return;
-                }
-
-            } else {
-                // just set the state with the last value
-                if ( $k === $count - 1 ) {
-                    sdk::debug("loading last value in initial state container for store: $store");
-                    return $this->setState($store, $name, $value, $store_type);
-                }
-            }
+            unset( $this->stores[ $store ][ $key ] );
+            $this->autoPersist( $store );
         }
     }
 
-    function clear($store, $name = '') {
+    /**
+     * Settles a deferred store once its owner has decided whether the
+     * persisted values still apply.
+     *
+     * $discard true: the cookie describes something that has ended, so it is
+     * erased and only what was set in memory this request is kept.
+     * $discard false: the cookie is merged in behind memory; memory wins.
+     */
+    public function settle( string $store, bool $discard ): void {
 
-        if ( ! isset($this->stores[$store] ) ) {
-            $this->loadState($store);
+        if ( $discard ) {
+
+            $this->loaded[ $store ] = true;
+            $this->erase( $store );
+            return;
         }
 
-        if ( array_key_exists( $store, $this->stores ) ) {
+        $this->merge( $store );
+    }
 
-            if ( ! $name ) {
+    /**
+     * Writes a store to its cookie.
+     */
+    public function persist( string $store ): void {
 
-                unset( $this->stores[ $store ] );
+        $meta = $this->meta[ $store ] ?? null;
 
-                if ($this->stores_meta[$store]['type'] === 'cookie') {
+        if ( ! $meta || ! $meta['persist'] ) {
 
-                    return $this->deleteCookie($store);
-                }
+            return;
+        }
 
-            } else {
+        if ( ! isset( $this->stores[ $store ] ) ) {
 
-                if ( array_key_exists( $name, $this->stores[ $store ] ) ) {
-                    unset( $this->stores[ $store ][ $name ] );
+            sdk::debug( "Cannot persist state. Store $store is empty." );
+            return;
+        }
 
-                    if ($this->stores_meta[$store]['type'] === 'cookie') {
+        $value = $this->stores[ $store ];
 
-                        return $this->persistState( $store );
-                    }
-                }
+        if ( is_array( $value ) ) {
+
+            $value = $this->stamp( $value );
+            $this->stores[ $store ] = $value;
+            $value = json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+        }
+
+        $this->writeStoreCookie( $store, (string) $value );
+    }
+
+    /**
+     * Moves a legacy cookie's values into another store's cookie and erases
+     * the legacy cookie.
+     *
+     * $collapse true: the legacy keys are merged over the target's (owa_b into
+     * the session store). false: the legacy cookie is copied only when the
+     * target has none (owa_s renamed to owa_s_<siteId>).
+     */
+    public function migrateCookie( string $from, string $to, bool $collapse ): void {
+
+        $legacy = $this->readPersisted( $from );
+
+        if ( ! is_array( $legacy ) ) {
+
+            return;
+        }
+
+        $target = $this->readPersisted( $to );
+
+        if ( ! $collapse && $target !== null ) {
+
+            $this->erase( $from );
+            return;
+        }
+
+        $merged = is_array( $target ) ? $target : [];
+
+        foreach ( $legacy as $k => $v ) {
+
+            if ( $k !== 'cdh' && $k !== 'sv' ) {
+
+                $merged[ $k ] = $v;
             }
         }
+
+        $raw = self::jsEscape( (string) json_encode( $this->stamp( $merged ), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) );
+
+        $this->writeStoreCookie( $to, $raw, false );
+        $this->cookies[ $this->getSetting( 'ns' ) . $to ] = [ $raw ];
+        $this->erase( $from );
+
+        sdk::debug( 'Migrated legacy store %s into %s.', $from, $to );
     }
 
-    function getPermExpiration() {
+    /**
+     * @param array<string, mixed> $value
+     * @return array<string, mixed>
+     */
+    private function stamp( array $value ): array {
 
-        $time = time()+3600*24*365*15;
-        return $time;
+        $value['sv'] = self::STORE_VERSION;
+
+        if ( $this->getSetting( 'hash_cookies_to_domain' ) ) {
+
+            $value['cdh'] = $this->getCookieDomainHash();
+        }
+
+        return $value;
     }
 
-    function addStores($array) {
+    private function writeStoreCookie( string $store, string $value, bool $escape = true ): void {
 
-        $this->stores = array_merge($this->stores, $array);
-        return;
+        $days = $this->meta[ $store ]['days'] ?? null;
+        $expires = 0;
+
+        if ( $days && $this->getSetting( 'cookie_persistence' ) ) {
+
+            $expires = time() + (int) round( $days * 86400 );
+        }
+
+        $this->writeCookie( $store, $escape ? self::jsEscape( $value ) : $value, $expires );
     }
 
-    function getCookieDomainHash($domain = '') {
+    public function erase( string $store ): void {
+
+        $name = $this->getSetting( 'ns' ) . $store;
+
+        // nothing to erase, and erasing would send a needless header
+        if ( empty( $this->cookies[ $name ] ) ) {
+
+            return;
+        }
+
+        $this->writeCookie( $store, '', time() - 86400 * 2 );
+
+        unset( $this->cookies[ $name ] );
+    }
+
+    public function getCookieDomainHash( string $domain = '' ): string {
 
         if ( ! $domain ) {
-            $domain = $this->getSetting( 'cookie_domain' );
+
+            $domain = (string) $this->getSetting( 'cookie_domain' );
         }
 
-        return $this->crc32AsHex($domain);
+        return self::crc32AsHex( $domain );
     }
-    
+
     /**
-     * Convert Associative Array to String
-     *
-     * @param string $inner_glue
-     * @param string $outer_glue
-     * @param array $array
-     * @return string
+     * Unsigned lower-case hex CRC32, as Util.dechex(Util.crc32()) in the JS tracker.
      */
-    public static function implode_assoc($inner_glue, $outer_glue, $array) {
-       $output = array();
-       foreach( $array as $key => $item ) {
-              $output[] = $key . $inner_glue . $item;
-        }
+    public static function crc32AsHex( string $string ): string {
 
-        return implode($outer_glue, $output);
-    }
-    
-    private function createCookie($cookie_name, $cookie_value, $expires = 0, $path = '/', $domain = '') {
-        
-        $samesite = 'lax';
-        $secure = false;
-        $httponly = false;
-        
-        if (! $domain ) {
-            
-            $domain = $this->getSetting( 'cookie_domain' );
-        }
-        
-        if (is_array($cookie_value)) {
-
-            $cookie_value = $this->implode_assoc('=>', '|||', $cookie_value);
-        }
-
-        // add namespace
-        $cookie_name = sprintf('%s%s', $this->getSetting('ns'), $cookie_name);
-
-        // debug
-        sdk::debug(sprintf('Setting cookie %s with values: %s under domain: %s', $cookie_name, $cookie_value, $domain));
-
-        // makes cookie to session cookie only
-        if ( ! $this->getSetting( 'cookie_persistence' ) ) {
-            $expires = 0;
-        }
-        
-        // check for php version to set samesite attribute.
-        //php 7.2
-        if (PHP_VERSION_ID < 70300) {
-    
-            $path .= '; SameSite='.$samesite;            
-            setcookie($cookie_name, $cookie_value, $expires, $path, $domain);    
-        
-        } else {
-            //php 7.3+
-            setcookie($cookie_name, $cookie_value, [
-                'expires' => $expires,
-                'path' => $path,
-                'domain' => $domain,
-                'samesite' => $samesite,
-                'secure' => $secure,
-                'httponly' => $httponly,
-            ]);
-        }
+        return dechex( crc32( $string ) );
     }
 
-    private function deleteCookie($cookie_name, $path = '/', $domain = '') {
+    /**
+     * Cookie values by name, keeping duplicates, in header order.
+     *
+     * Read from the raw Cookie header because the same name can be set on
+     * several domains (example.com and .example.com) and $_COOKIE keeps only
+     * one, and because $_COOKIE url-decodes '+' to a space, which escape()
+     * does not.
+     *
+     * @return array<string, list<string>>
+     */
+    public static function readRequestCookies(): array {
 
-        return $this->createCookie($cookie_name, false, time()-3600*25, $path, $domain);
-    }
-    
-    private function crc32AsHex($string) {
-	    
-        $crc = crc32($string);
-        //$crc += 0x100000000;
-        if ($crc < 0) {
-            $crc = 0xFFFFFFFF + $crc + 1;
-        }
-        return dechex($crc);
-    }
+        $cookies = [];
 
-	private function assocFromString($string_state, $inner = '=>', $outer = '|||') {
+        if ( ! empty( $_SERVER['HTTP_COOKIE'] ) && is_string( $_SERVER['HTTP_COOKIE'] ) ) {
 
-        if (!empty($string_state)):
+            foreach ( explode( ';', $_SERVER['HTTP_COOKIE'] ) as $pair ) {
 
-            if (strpos($string_state, $outer) === false):
+                $pair = trim( $pair );
 
-                return $string_state;
+                if ( $pair === '' || ! str_contains( $pair, '=' ) ) {
 
-            else:
-
-                $array = explode($outer, $string_state);
-
-                $state = array();
-
-                foreach ($array as $key => $value) {
-
-                    list($realkey, $realvalue) = explode($inner, $value);
-                    $state[$realkey] = $realvalue;
-
+                    continue;
                 }
 
-            endif;
+                [ $name, $value ] = explode( '=', $pair, 2 );
+                $cookies[ trim( $name ) ][] = trim( $value );
+            }
 
-        endif;
+            return $cookies;
+        }
+
+        foreach ( $_COOKIE as $name => $value ) {
+
+            if ( is_string( $value ) ) {
+
+                $cookies[ $name ][] = $value;
+            }
+        }
+
+        return $cookies;
+    }
+
+    /**
+     * JavaScript escape(): A-Z a-z 0-9 @*_+-./ stay as they are, other code
+     * units below 256 become %XX, the rest %uXXXX.
+     */
+    public static function jsEscape( string $value ): string {
+
+        $out = '';
+        $units = unpack( 'n*', (string) iconv( 'UTF-8', 'UTF-16BE//IGNORE', $value ) ) ?: [];
+
+        foreach ( $units as $u ) {
+
+            if ( $u < 128 && preg_match( '#[A-Za-z0-9@*_+\-./]#', chr( $u ) ) ) {
+
+                $out .= chr( $u );
+
+            } elseif ( $u < 256 ) {
+
+                $out .= sprintf( '%%%02X', $u );
+
+            } else {
+
+                $out .= sprintf( '%%u%04X', $u );
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * JavaScript unescape(): %XX and %uXXXX are code units, '+' stays '+'.
+     */
+    public static function jsUnescape( string $value ): string {
+
+        if ( ! str_contains( $value, '%' ) ) {
+
+            return $value;
+        }
+
+        $utf16 = '';
+        $len = strlen( $value );
+
+        for ( $i = 0; $i < $len; $i++ ) {
+
+            $c = $value[ $i ];
+
+            if ( $c === '%' ) {
+
+                if ( $i + 5 < $len && ( $value[ $i + 1 ] === 'u' || $value[ $i + 1 ] === 'U' ) && ctype_xdigit( substr( $value, $i + 2, 4 ) ) ) {
+
+                    $utf16 .= pack( 'n', hexdec( substr( $value, $i + 2, 4 ) ) );
+                    $i += 5;
+                    continue;
+                }
+
+                if ( $i + 2 < $len && ctype_xdigit( substr( $value, $i + 1, 2 ) ) ) {
+
+                    $utf16 .= pack( 'n', hexdec( substr( $value, $i + 1, 2 ) ) );
+                    $i += 2;
+                    continue;
+                }
+            }
+
+            $utf16 .= pack( 'n', ord( $c ) );
+        }
+
+        return (string) iconv( 'UTF-16BE', 'UTF-8//IGNORE', $utf16 );
+    }
+
+    /**
+     * Decodes one cookie value: JSON when it starts with '{', else the legacy
+     * assoc format, else the plain string.
+     *
+     * @return array<string, mixed>|string
+     */
+    public static function decodeValue( string $raw ): array|string {
+
+        $value = self::jsUnescape( $raw );
+
+        if ( str_starts_with( $value, '{' ) ) {
+
+            $decoded = json_decode( $value, true );
+
+            return is_array( $decoded ) ? $decoded : '';
+        }
+
+        if ( str_contains( $value, '|||' ) || str_contains( $value, '=>' ) ) {
+
+            $state = [];
+
+            foreach ( explode( '|||', $value ) as $pair ) {
+
+                $parts = explode( '=>', $pair, 2 );
+
+                if ( count( $parts ) === 2 ) {
+
+                    $state[ $parts[0] ] = $parts[1];
+                }
+            }
+
+            return $state;
+        }
+
+        return $value;
+    }
+
+    private function load( string $store ): void {
+
+        if ( isset( $this->loaded[ $store ] ) ) {
+
+            return;
+        }
+
+        // a deferred store is merged only by settle()
+        if ( ! empty( $this->meta[ $store ]['deferred'] ) ) {
+
+            return;
+        }
+
+        $this->merge( $store );
+    }
+
+    private function merge( string $store ): void {
+
+        $this->loaded[ $store ] = true;
+
+        $persisted = $this->readPersisted( $store );
+
+        if ( $persisted === null ) {
+
+            return;
+        }
+
+        $memory = $this->stores[ $store ] ?? null;
+
+        if ( is_array( $persisted ) && ( is_array( $memory ) || $memory === null ) ) {
+
+            $this->stores[ $store ] = array_merge( $persisted, $memory ?? [] );
+
+        } elseif ( $memory === null ) {
+
+            $this->stores[ $store ] = $persisted;
+        }
+    }
+
+    /**
+     * @return array<string, mixed>|string|null
+     */
+    private function readPersisted( string $store ): array|string|null {
+
+        $values = $this->cookies[ $this->getSetting( 'ns' ) . $store ] ?? [];
+        $hash = $this->getCookieDomainHash();
+        $state = null;
+
+        foreach ( $values as $i => $raw ) {
+
+            $value = self::decodeValue( $raw );
+
+            if ( $value === '' || $value === [] ) {
+
+                continue;
+            }
+
+            if ( is_array( $value ) && isset( $value['sv'] ) && (int) $value['sv'] > self::STORE_VERSION ) {
+
+                sdk::debug( 'Cookie %s index %s was written by a newer tracker. Not loading.', $store, $i );
+                continue;
+            }
+
+            if ( $this->getSetting( 'hash_cookies_to_domain' ) ) {
+
+                if ( is_array( $value ) && isset( $value['cdh'] ) && (string) $value['cdh'] === $hash ) {
+
+                    $state = $value;
+                    break;
+                }
+
+                sdk::debug( 'Cookie %s index %s has no matching domain hash. Not loading.', $store, $i );
+                continue;
+            }
+
+            // without domain hashing the last cookie of that name wins
+            $state = $value;
+        }
 
         return $state;
-
-
-    }
-    
-    private function initializeStores() {
-	    
-        // look for access to the raw HTTP cookie string. This is needed becuause OWA can set settings cookies
-        // with the same name under different subdomains. Multiple cookies with the same name are not
-        // available under $_COOKIE. Therefor OWA's cookie conainter must be an array of arrays.
-        if ( isset( $_SERVER['HTTP_COOKIE'] ) && strpos( $_SERVER['HTTP_COOKIE'], ';') ) {
-
-            $raw_cookie_array = explode(';', $_SERVER['HTTP_COOKIE']);
-
-            foreach($raw_cookie_array as $raw_cookie ) {
-
-                $nvp = explode( '=', trim( $raw_cookie ) );
-                $this->cookies[ $nvp[0] ][] = urldecode($nvp[1]);
-            }
-
-        } else {
-            // just use the normal cookie global
-            if ( $_COOKIE && is_array($_COOKIE) ) {
-
-                foreach ($_COOKIE as $n => $v) {
-                    // hack against other frameworks sanitizing cookie data and blowing away our '>' delimiter
-                    // this should be removed once all cookies are using json format.
-                    if (strpos($v, '&gt;')) {
-                        $v = str_replace("&gt;", ">", $v);
-                    }
-
-                    $cookies[ $n ][] = $v;
-                }
-            }
-        }
-
-        // populate owa_cookie container with just the cookies that have the owa namespace.
-        $this->cookies = $this->stripParams( $this->cookies, $this->getSetting( 'ns' ) );
-		
-		// merges cookies
-        foreach ( $this->cookies as $k => $owa_cookie ) {
-
-            $this->setInitialState( $k, $owa_cookie );
-        }
-    }
-    
-    private function stripParams($params, $ns = '') {
-
-        $striped_params = array();
-
-        if (!empty($ns)) {
-
-            $len = strlen($ns);
-
-            foreach ($params as $n => $v) {
-
-                // if namespace is present in param
-                if (strstr($n, $ns)) {
-                    // strip the namespace value
-                    $striped_n = substr($n, $len);
-                    //add to striped array
-                    $striped_params[$striped_n] = $v;
-
-                }
-
-            }
-
-            return $striped_params;
-
-        } else {
-
-            return $params;
-        }
-
     }
 
+    private function autoPersist( string $store ): void {
 
+        $meta = $this->meta[ $store ] ?? null;
+
+        if ( $meta && $meta['persist'] && ! $meta['deferred'] ) {
+
+            $this->persist( $store );
+        }
+    }
+
+    private function writeCookie( string $store, string $raw_value, int $expires ): void {
+
+        $name = $this->getSetting( 'ns' ) . $store;
+
+        $options = [
+            'expires'  => $expires,
+            'path'     => '/',
+            'domain'   => (string) $this->getSetting( 'cookie_domain' ),
+            'samesite' => 'Lax',
+            'secure'   => $this->getSetting( 'cookie_secure' ) ?? self::isHttps(),
+            'httponly' => false,
+        ];
+
+        sdk::debug( 'Setting cookie %s with value: %s under domain: %s', $name, $raw_value, $options['domain'] );
+
+        ( $this->cookieWriter )( $name, $raw_value, $options );
+    }
+
+    /**
+     * Default cookie writer.
+     */
+    public static function sendCookie( string $name, string $raw_value, array $options ): void {
+
+        if ( headers_sent( $file, $line ) ) {
+
+            sdk::debug( "Cannot set cookie $name: output already started at $file:$line." );
+            return;
+        }
+
+        setrawcookie( $name, $raw_value, $options );
+    }
+
+    private static function isHttps(): bool {
+
+        $https = $_SERVER['HTTPS'] ?? '';
+
+        if ( $https && strtolower( (string) $https ) !== 'off' ) {
+
+            return true;
+        }
+
+        return strtolower( (string) ( $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '' ) ) === 'https';
+    }
 }
-
-?>

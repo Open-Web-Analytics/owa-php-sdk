@@ -1,10 +1,8 @@
 <?php
 
 return [
-	
-	'tracker'	=>	['namespace' => 'Tracker'],
-	'sites'		=>	['namespace' => 'Sites']
-	
-];
 
-?>
+    'tracker'   => ['namespace' => 'Tracker'],
+    'sites'     => ['namespace' => 'Sites']
+
+];

@@ -1,0 +1,8 @@
+parameters:
+    level: 6
+    paths:
+        - src
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # config arrays are free-form by design
+        - identifier: missingType.iterableValue
