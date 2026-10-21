@@ -10,18 +10,19 @@ concurrency:
 
 jobs:
   test:
-    name: Lint, analyse & test (PHP ${{ matrix.php }}${{ matrix.curl && '' || ', no curl' }})
+    name: Lint, analyse & test (PHP ${{ matrix.php }}${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4']
-        curl: [true]
+        extensions: ['json, curl']
         include:
           # the stream transport is the fallback for hosts without ext-curl
           - php: '8.4'
-            curl: false
+            extensions: 'json, :curl'
+            label: ', no curl'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,9 +31,12 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: ${{ matrix.curl && 'json, curl' || 'json, :curl' }}
+          extensions: ${{ matrix.extensions }}
           coverage: none
           tools: composer:v2
+
+      - name: Show extensions
+        run: php -m | grep -iE '^(curl|json|iconv)$' || true
 
       - name: Install dependencies
         run: composer install --no-interaction --no-progress --prefer-dist
