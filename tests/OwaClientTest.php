@@ -160,11 +160,17 @@ class OwaClientTest extends TestCase {
         $this->assertSame( [ 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ], $client->getCredentials() );
     }
 
-    public function testCredentialsFromFileDefaultsSection(): void {
+    /**
+     * 1.0.x read [defaults]; its wiki documented [default].
+     */
+    #[\PHPUnit\Framework\Attributes\TestWith( [ '[defaults]' ] )]
+    #[\PHPUnit\Framework\Attributes\TestWith( [ '[default]' ] )]
+    #[\PHPUnit\Framework\Attributes\TestWith( [ '' ] )]
+    public function testCredentialsFromFile( string $section ): void {
 
         $this->tmp = sys_get_temp_dir() . '/owa-sdk-test-' . bin2hex( random_bytes( 4 ) );
         mkdir( $this->tmp . '/.owa', 0700, true );
-        file_put_contents( $this->tmp . '/.owa/credentials', "[defaults]\napi_key = " . self::API_KEY . "\nauth_key = " . self::AUTH_KEY . "\n" );
+        file_put_contents( $this->tmp . '/.owa/credentials', "$section\napi_key = " . self::API_KEY . "\nauth_key = " . self::AUTH_KEY . "\n" );
 
         $home = getenv( 'HOME' );
         putenv( 'HOME=' . $this->tmp );
