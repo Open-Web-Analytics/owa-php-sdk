@@ -73,7 +73,7 @@ class OwaClient {
      *
      * Looked up in order: the 'credentials' config array, the OWA_API_KEY /
      * OWA_AUTH_KEY environment variables, constants of the same names, then
-     * the [defaults] section of ~/.owa/credentials.
+     * the [defaults] or [default] section of ~/.owa/credentials.
      *
      * @return array{api_key: string, auth_key: string}
      */
@@ -134,8 +134,8 @@ class OwaClient {
 
         $ini = parse_ini_file( $file, true, INI_SCANNER_RAW );
 
-        // [defaults] section, or bare keys
-        $section = is_array( $ini ) ? ( $ini['defaults'] ?? $ini ) : null;
+        // [defaults] (what 1.0.x read), [default] (what its docs said), or bare keys
+        $section = is_array( $ini ) ? ( $ini['defaults'] ?? $ini['default'] ?? $ini ) : null;
 
         if ( is_array( $section ) && isset( $section['api_key'], $section['auth_key'] ) ) {
 
