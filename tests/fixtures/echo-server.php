@@ -3,6 +3,13 @@
 // Router for `php -S`: echoes the request back as JSON so transports can be
 // tested against a real socket.
 
+// Never answer under a real web server: it would echo visitors' cookies back.
+if ( PHP_SAPI !== 'cli-server' ) {
+
+    http_response_code( 404 );
+    return;
+}
+
 if ( ( $_SERVER['REQUEST_URI'] ?? '' ) === '/status/404' ) {
 
     http_response_code( 404 );

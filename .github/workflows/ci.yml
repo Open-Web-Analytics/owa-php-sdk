@@ -38,6 +38,16 @@ jobs:
       - name: Show extensions
         run: php -m | grep -iE '^(curl|json|iconv)$' || true
 
+      - name: Check package contents
+        # what Composer installs is `git archive`; anything else is export-ignore'd
+        run: |
+          extra=$(git archive HEAD | tar -t | grep -vE '^(LICENSE|README\.md|composer\.json|owa-autoloader\.php|src/.*)$' || true)
+          if [ -n "$extra" ]; then
+            echo "Not export-ignore'd in .gitattributes:"
+            echo "$extra"
+            exit 1
+          fi
+
       - name: Install dependencies
         run: composer install --no-interaction --no-progress --prefer-dist
 
