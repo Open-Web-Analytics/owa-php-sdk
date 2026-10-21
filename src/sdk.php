@@ -18,7 +18,7 @@ namespace OwaSdk;
  */
 class sdk {
 
-    const VERSION = '1.1.0';
+    const VERSION = '1.1.1';
 
     private array $config;
 

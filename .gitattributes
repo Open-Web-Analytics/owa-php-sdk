@@ -93,3 +93,16 @@ Procfile text filter=spabs
 *.md text filter=spabs
 LICENSE text filter=spabs
 AUTHORS text filter=spabs
+
+# Not part of the installed package: Composer's dist downloads and
+# `git archive` leave these out.
+/.github export-ignore
+/tests export-ignore
+/phpstan.neon export-ignore
+/phpunit.xml export-ignore
+/composer.lock export-ignore
+/.gitattributes export-ignore
+/.gitconfig export-ignore
+/.gitignore export-ignore
+/CODE_OF_CONDUCT.md export-ignore
+/CONTRIBUTING.md export-ignore
