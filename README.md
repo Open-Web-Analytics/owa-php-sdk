@@ -114,7 +114,9 @@ $sites = $sdk->createSites( [
 
 It is sent as `Authorization: Bearer <password>`, and the request is not signed, so no `auth_key` is needed. When an application password and the key pair are both set, the application password is used. The `OWA_APP_PASSWORD` environment variable or constant, or `app_password =` in `~/.owa/credentials`, work like the keys above.
 
-OWA refuses an application password sent over plain HTTP unless the install allows it, so use an `https` `instance_url`. A read-only password is enough for `listSites()`; `addSite()` needs a full one.
+The SDK does not send an application password to an `http://` `instance_url`; the request fails with `Application password not sent: instance_url is not https`. OWA refuses one over plain HTTP too, unless the install turns `app_passwords_require_https` off; for such an install, set `allow_insecure_app_password` to `true`.
+
+A read-only password is enough for `listSites()`; `addSite()` needs a full one.
 
 ## Configuration
 
@@ -129,6 +131,7 @@ OWA refuses an application password sent over plain HTTP unless the install allo
 | `respect_do_not_track` | `true` | |
 | `timeout` / `connect_timeout` | `5` / `2` | seconds |
 | `transport` | curl or streams | an `OwaSdk\Http\Transport` |
+| `allow_insecure_app_password` | `false` | send an application password to an `http://` `instance_url` |
 | `debug` / `debug_log` | `false` / PHP's error log | debug messages and where they go |
 
 ## Upgrading from 1.0.x

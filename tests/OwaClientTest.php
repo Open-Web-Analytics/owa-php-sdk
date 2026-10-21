@@ -204,6 +204,41 @@ class OwaClientTest extends TestCase {
         $this->assertArrayNotHasKey( 'X-SIGNATURE', $headers );
     }
 
+    public function testAppPasswordIsNotSentOverHttp(): void {
+
+        $client = $this->sites( [
+            'instance_url' => 'http://owa.example.com/owa',
+            'credentials'  => [ 'app_password' => self::APP_PASSWORD, 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ],
+        ] );
+
+        $this->assertNull( $client->listSites() );
+        $this->assertSame( [], $this->transport->requests );
+        $this->assertSame( [ 'Application password not sent: instance_url is not https' ], $client->getLastErrors() );
+    }
+
+    public function testAllowInsecureAppPasswordSendsOverHttp(): void {
+
+        $this->transport->queue( new Response( 200, json_encode( [ 'data' => [] ] ) ) );
+
+        $client = $this->sites( [
+            'instance_url'                => 'http://owa.example.com/owa',
+            'credentials'                 => [ 'app_password' => self::APP_PASSWORD ],
+            'allow_insecure_app_password' => true,
+        ] );
+
+        $this->assertSame( [], $client->listSites() );
+        $this->assertSame( 'Bearer ' . self::APP_PASSWORD, $this->transport->last()['headers']['Authorization'] );
+    }
+
+    public function testKeyPairIsStillSentOverHttp(): void {
+
+        $this->transport->queue( new Response( 200, json_encode( [ 'data' => [] ] ) ) );
+
+        $this->sites( [ 'instance_url' => 'http://owa.example.com/owa' ] )->listSites();
+
+        $this->assertArrayHasKey( 'X-SIGNATURE', $this->transport->last()['headers'] );
+    }
+
     public function testAppPasswordWinsOverTheLegacyKeys(): void {
 
         $this->transport->queue( new Response( 200, json_encode( [ 'data' => [] ] ) ) );

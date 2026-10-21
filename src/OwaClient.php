@@ -40,6 +40,8 @@ class OwaClient {
             'debug'             => false,
             'timeout'           => 5,
             'connect_timeout'   => 2,
+            // send an application password to an http:// instance_url
+            'allow_insecure_app_password' => false,
             // an OwaSdk\Http\Transport; null picks curl, or streams without ext-curl
             'transport'         => null,
         ];
@@ -261,6 +263,15 @@ class OwaClient {
         ];
 
         if ( $credentials['app_password'] !== '' ) {
+
+            // refused before sending: over http the password would travel in clear
+            if ( strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) ) !== 'https' && ! $this->getSetting( 'allow_insecure_app_password' ) ) {
+
+                $this->last_errors = [ 'Application password not sent: instance_url is not https' ];
+                error_log( sprintf( 'OWA SDK: %s %s failed: %s', $params['http_method'], strtok( $url, '?' ), $this->last_errors[0] ) );
+
+                return null;
+            }
 
             $headers['Authorization'] = 'Bearer ' . $credentials['app_password'];
 
