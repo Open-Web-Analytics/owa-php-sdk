@@ -102,6 +102,22 @@ auth_key = your-owa-auth-key
 
 Requests are signed with the full URL, so `instance_url` must use the scheme, host and port that OWA itself sees.
 
+### Application passwords (OWA 2.x)
+
+OWA 2.x issues application passwords: named, revocable credentials a user creates under My Preferences > Application Passwords. Pass one instead of the key pair:
+
+```php
+$sites = $sdk->createSites( [
+    'credentials' => [ 'app_password' => '...' ],   // 44 characters, shown once when created
+] );
+```
+
+It is sent as `Authorization: Bearer <password>`, and the request is not signed, so no `auth_key` is needed. When an application password and the key pair are both set, the application password is used. The `OWA_APP_PASSWORD` environment variable or constant, or `app_password =` in `~/.owa/credentials`, work like the keys above.
+
+The SDK does not send an application password to an `http://` `instance_url`; the request fails with `Application password not sent: instance_url is not https`. OWA refuses one over plain HTTP too, unless the install turns `app_passwords_require_https` off; for such an install, set `allow_insecure_app_password` to `true`.
+
+A read-only password is enough for `listSites()`; `addSite()` needs a full one.
+
 ## Configuration
 
 | Key | Default | |
@@ -115,6 +131,7 @@ Requests are signed with the full URL, so `instance_url` must use the scheme, ho
 | `respect_do_not_track` | `true` | |
 | `timeout` / `connect_timeout` | `5` / `2` | seconds |
 | `transport` | curl or streams | an `OwaSdk\Http\Transport` |
+| `allow_insecure_app_password` | `false` | send an application password to an `http://` `instance_url` |
 | `debug` / `debug_log` | `false` / PHP's error log | debug messages and where they go |
 
 ## Upgrading from 1.0.x
