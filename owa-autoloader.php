@@ -1,24 +1,27 @@
 <?php
 
-$mapping = [
-	'OwaSdk\sdk'					=> __DIR__ . '/src/sdk.php',
-	'OwaSdk\OwaClient'				=> __DIR__ . '/src/OwaClient.php',
-	'OwaSdk\Tracker\TrackerClient' 	=> __DIR__ . '/src/Tracker/TrackerClient.php',
-	'OwaSdk\Tracker\State' 			=> __DIR__ . '/src/Tracker/State.php',
-	'OwaSdk\Tracker\TrackingEvent'	=> __DIR__ . '/src/Tracker/TrackingEvent.php'
-	
-];
+/**
+ * Autoloader for installs that do not use Composer's own autoloader.
+ *
+ * Projects that installed the SDK with Composer should include
+ * vendor/autoload.php instead. The SDK has no runtime dependencies, so this
+ * file is all a manual install needs.
+ */
 
+spl_autoload_register( function ( $class ) {
 
-spl_autoload_register(function ($class) use ($mapping) {
-	
-    if (isset($mapping[$class])) {
-	    
-        require $mapping[$class];
+    $prefix = 'OwaSdk\\';
+
+    if ( ! str_starts_with( $class, $prefix ) ) {
+
+        return;
     }
-    
-}, true);
 
-require_once( __DIR__ . '/vendor/autoload.php' );
+    $file = __DIR__ . '/src/' . str_replace( '\\', '/', substr( $class, strlen( $prefix ) ) ) . '.php';
 
-?>
+    if ( is_file( $file ) ) {
+
+        require $file;
+    }
+
+}, true );

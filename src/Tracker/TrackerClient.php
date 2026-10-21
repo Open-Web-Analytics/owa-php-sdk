@@ -11,40 +11,79 @@ use OwaSdk\sdk as sdk;
  * Licensed under GPL v2.0 http://www.gnu.org/copyleft/gpl.html
  *
  */
- 
+
 /**
  * Tracker Class
- * 
+ *
+ * Server-side counterpart of the OWA 1.14 JavaScript tracker
+ * (modules/Base/src/tracker/Tracker.js). It derives the same visitor,
+ * session and attribution state from the same cookies and sends the same
+ * properties to log.php, so a visitor tracked from both PHP and JS keeps one
+ * visitor id and one session.
+ *
  * @author      Peter Adams <peter@openwebanalytics.com>
  * @license     http://www.gnu.org/copyleft/gpl.html GPL v2.0
  */
-
 class TrackerClient extends OwaClient {
-	
-	var $config;
-	
-	var $state;
-	
-    var $commerce_event;
 
-    var $pageview_event;
+    const LOG_ENDPOINT = 'log.php';
 
-    var $global_event_properties = array();
+    /**
+     * Longer log.php URLs are sent as a POST body, as the JS tracker does.
+     */
+    const GET_CHARACTER_LIMIT = 2000;
 
-    var $stateInit;
+    /**
+     * Campaign keys (logical name => key in the owa_c attribution history).
+     */
+    const CAMPAIGN_KEYS = [
+        'medium'        => 'md',
+        'campaign'      => 'cn',
+        'source'        => 'sr',
+        'search_terms'  => 'tr',
+        'ad'            => 'ad',
+        'ad_type'       => 'at',
+    ];
 
-    var $organicSearchEngines;
+    public State $state;
 
-    // set one traffic has been attributed.
-    var $isTrafficAttributed;
+    public ?TrackingEvent $commerce_event = null;
 
-    public function __construct($config = null) {
+    public TrackingEvent $pageview_event;
 
-		$defaults = [
-			
-			'instance_url'						=> '',
-			'visitor_param'                     => 'v',
-			'campaign_params' 					=> [
+    /** @var array<string, mixed> */
+    public array $global_event_properties = [];
+
+    public bool $stateInit = false;
+
+    public string $site_id = '';
+
+    /**
+     * Page-scoped state: the JS tracker's 'd' store. Never persisted.
+     *
+     * @var array<string, mixed>
+     */
+    private array $page_state = [];
+
+    private bool $isNewSessionFlag = false;
+
+    private bool $pendingSessionStart = false;
+
+    private bool $pendingVisitorCreated = false;
+
+    private ?string $ip_address = null;
+
+    private ?string $user_agent = null;
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    public function __construct( array $config = [] ) {
+
+        $defaults = [
+
+            'instance_url'                      => '',
+            'campaign_params'                   => [
                 'campaign'      => 'owa_campaign',
                 'medium'        => 'owa_medium',
                 'source'        => 'owa_source',
@@ -52,317 +91,335 @@ class TrackerClient extends OwaClient {
                 'ad'            => 'owa_ad',
                 'ad_type'       => 'owa_ad_type' ],
             'trafficAttributionMode'            => 'direct',
+            // lifetime of the owa_c attribution history, in days
             'campaignAttributionWindow'         => 60,
-            'site_session_param'                => 'ss',
+            // inactivity, in seconds, after which the next request starts a new session
             'session_length'                    => 1800,
             'maxCustomVars'                     => 5,
-            'max_prior_campaigns'                => 5,
-            'trafficAttributionMode'            => 'direct',
-            'campaignAttributionWindow'            => 60,
-            'ns'								=> 'owa_',
-            'cookie_persistence'                => true,  // Controls persistence of cookies, only for use in europe needed
-		];
-		
-		$client_config = array_merge( $defaults, $config );
-		
-		// parent will override the default config with passed values.
-		parent::__construct($client_config);
-		
-		$domain = '';
-
-		if (array_key_exists( 'cookie_domain',  $config) ) {
-			
-			$domain = $config['cookie_domain'];			
-		}
-
-		// set the cookie domain
-		$this->setCookieDomain( $domain );
-		
-		// inititiate state store
-		$state_config = [
-			'cookie_domain' 		=> $this->getSetting( 'cookie_domain' ),
-			'ns'					=> $this->getSetting( 'ns' ),
-			'cookie_persistence' 	=> $this->getSetting( 'cookie_persistence' ) 
-		];
-		
-		$this->state = new State($state_config);
-		
-        $this->pageview_event = $this->makeEvent();
-        $this->pageview_event->setEventType('base.page_request');
-        // Set the page url from environmental vars
-        $this->setGlobalEventProperty( 'page_url', $this->getCurrentUrl() );
-        $this->registerStateStore('v', time()+3600*24*365*10, '', 'assoc', 'cookie', true);
-        $this->registerStateStore('s', time()+3600*24*365*10, '', 'assoc', 'cookie', true);
-        $this->registerStateStore('b', null, '', 'json', 'cookie', true);
-        $cwindow = $this->getSetting( 'campaignAttributionWindow' );
-        $this->registerStateStore('c', time() + 3600 * 24 * $cwindow , '', 'json', 'cookie', true);
-
-        $this->organicSearchEngines = [
-            ['d' => 'google', 'q' => 'q'],
-            ['d' => 'yahoo', 'q' => 'p'],
-            ['d' => 'msn', 'q' => 'q'],
-            ['d' => 'bing', 'q' => 'q'],
-            ['d' => 'images.google', 'q' => 'q'],
-            ['d' => 'images.search.yahoo.com', 'q' => 'p'],
-            ['d' => 'aol', 'q' => 'query'],
-            ['d' => 'aol', 'q' => 'encquery'],
-            ['d' => 'aol', 'q' => 'q'],
-            ['d' => 'lycos', 'q' => 'query'],
-            ['d' => 'ask', 'q' => 'q'],
-            ['d' => 'altavista', 'q' => 'q'],
-            ['d' => 'netscape', 'q' => 'query'],
-            ['d' => 'cnn', 'q' => 'query'],
-            ['d' => 'about', 'q' => 'terms'],
-            ['d' => 'mamma', 'q' => 'q'],
-            ['d' => 'daum', 'q' => 'q'],
-            ['d' => 'eniro', 'q' => 'search_word'],
-            ['d' => 'naver', 'q' => 'query'],
-            ['d' => 'pchome', 'q' => 'q'],
-            ['d' => 'alltheweb', 'q' => 'q'],
-            ['d' => 'voila', 'q' => 'rdata'],
-            ['d' => 'virgilio', 'q' => 'qs'],
-            ['d' => 'live', 'q' => 'q'],
-            ['d' => 'baidu', 'q' => 'wd'],
-            ['d' => 'alice', 'q' => 'qs'],
-            ['d' => 'yandex', 'q' => 'text'],
-            ['d' => 'najdi', 'q' => 'q'],
-            ['d' => 'mama', 'q' => 'query'],
-            ['d' => 'seznam', 'q' => 'q'],
-            ['d' => 'search', 'q' => 'q'],
-            ['d' => 'wp', 'q' => 'szukaj'],
-            ['d' => 'onet', 'q' => 'qt'],
-            ['d' => 'szukacz', 'q' => 'q'],
-            ['d' => 'yam', 'q' => 'k'],
-            ['d' => 'kvasir', 'q' => 'q'],
-            ['d' => 'sesam', 'q' => 'q'],
-            ['d' => 'ozu', 'q' => 'q'],
-            ['d' => 'terra', 'q' => 'query'],
-            ['d' => 'mynet', 'q' => 'q'],
-            ['d' => 'ekolay', 'q' => 'q'],
-            ['d' => 'rambler', 'q' => 'query'],
-            ['d' => 'rambler', 'q' => 'words'],
-            ['d' => 'duckduckgo', 'q' => 'q'],
+            'max_prior_campaigns'               => 5,
+            'ns'                                => 'owa_',
+            'cookie_domain'                     => '',
+            // false makes every cookie a session cookie
+            'cookie_persistence'                => true,
+            'hash_cookies_to_domain'            => true,
+            // the JS tracker does not run for a browser sending DNT: 1
+            'respect_do_not_track'              => true,
+            // for tests: raw cookies by name, and a fn( $name, $value, $options ) cookie writer
+            'cookies'                           => null,
+            'cookie_writer'                     => null,
         ];
+
+        // parent will override the default config with passed values.
+        parent::__construct( array_merge( $defaults, $config ) );
+
+        $this->state = new State(
+            [
+                'cookie_domain'          => self::resolveCookieDomain( (string) $this->getSetting( 'cookie_domain' ), (string) $this->getServerParam( 'HTTP_HOST' ) ),
+                'ns'                     => $this->getSetting( 'ns' ),
+                'cookie_persistence'     => $this->getSetting( 'cookie_persistence' ),
+                'hash_cookies_to_domain' => $this->getSetting( 'hash_cookies_to_domain' ),
+            ],
+            $this->getSetting( 'cookies' ),
+            $this->getSetting( 'cookie_writer' )
+        );
+
+        $this->setSetting( 'cookie_domain', $this->state->getSetting( 'cookie_domain' ) );
+
+        $this->state->registerStore( 'v', 364 );
+        $this->state->registerStore( 'c', (int) $this->getSetting( 'campaignAttributionWindow' ) );
+        // legacy stores, read only to migrate them
+        $this->state->registerStore( 's', 364 );
+        $this->state->registerStore( 'b', null );
+
+        $this->pageview_event = $this->makeEvent();
+        $this->pageview_event->setEventType( 'base.page_request' );
     }
 
-    public function setPageTitle($value) {
-        $this->pageview_event->set('page_title', $value);
-    }
+    /**
+     * The cookie domain, resolved as the JS tracker's setCookieDomain() does:
+     * a leading '.', and 'www.' stripped only when the domain was not passed
+     * explicitly.
+     */
+    public static function resolveCookieDomain( string $domain, string $http_host = '' ): string {
 
-    public function setPageType($value) {
-        $this->pageview_event->set('page_type', $value);
-    }
+        $explicit = $domain !== '';
 
-    public function setProperty($name, $value) {
-        $this->setGlobalEventProperty($name, $value);
-    }
+        if ( ! $explicit ) {
 
-    private function setGlobalEventProperty($name, $value) {
-
-        $this->global_event_properties[$name] = $value;
-    }
-
-    private function getGlobalEventProperty($name) {
-
-        if ( array_key_exists($name, $this->global_event_properties) ) {
-            return $this->global_event_properties[$name];
+            // HTTP_HOST may carry a port; document.domain never does
+            $domain = (string) preg_replace( '/:\d+$/', '', $http_host );
         }
-    }
 
-    private function deleteGlobalEventProperty( $name ) {
+        $domain = ltrim( $domain, '.' );
 
-        if ( array_key_exists($name, $this->global_event_properties) ) {
-            unset($this->global_event_properties[$name]);
+        if ( $domain === '' ) {
+
+            return '';
         }
+
+        if ( ! $explicit && str_starts_with( $domain, 'www.' ) ) {
+
+            $domain = substr( $domain, 4 );
+        }
+
+        return '.' . $domain;
     }
 
-    private function manageState( &$event ) {
+    public function setPageTitle( string $value ): void {
+
+        $this->page_state['page_title'] = $value;
+    }
+
+    public function setPageType( string $value ): void {
+
+        $this->page_state['page_type'] = $value;
+    }
+
+    public function setProperty( string $name, mixed $value ): void {
+
+        $this->setGlobalEventProperty( $name, $value );
+    }
+
+    /**
+     * The visitor's IP address, forwarded to OWA in X-Forwarded-For.
+     *
+     * OWA ignores an ip_address event property and reads the address from the
+     * request headers. Without this the SDK forwards the incoming
+     * X-Forwarded-For chain plus REMOTE_ADDR, and OWA takes the leftmost
+     * public address, as it would for the JS tracker. Set it when your own
+     * proxy setup tells you the real address.
+     */
+    public function setIpAddress( string $ip ): void {
+
+        $this->ip_address = $ip;
+    }
+
+    /**
+     * The visitor's user agent, forwarded to OWA as the User-Agent header.
+     * Defaults to the incoming request's User-Agent.
+     */
+    public function setUserAgent( string $user_agent ): void {
+
+        $this->user_agent = $user_agent;
+    }
+
+    private function setGlobalEventProperty( string $name, mixed $value ): void {
+
+        $this->global_event_properties[ $name ] = $value;
+    }
+
+    private function getGlobalEventProperty( string $name ): mixed {
+
+        return $this->global_event_properties[ $name ] ?? null;
+    }
+
+    private function deleteGlobalEventProperty( string $name ): void {
+
+        unset( $this->global_event_properties[ $name ] );
+    }
+
+    /**
+     * Name of this site's session store: s_<siteId>.
+     */
+    private function sessionStore(): string {
+
+        return 's_' . $this->getSiteId();
+    }
+
+    /**
+     * Registers the per-site session store and runs the JS tracker's
+     * migrations: legacy owa_s becomes owa_s_<siteId>, and owa_b's
+     * session-scoped custom variables are folded into it.
+     */
+    private function initSessionStore(): void {
+
+        $s = $this->sessionStore();
+
+        if ( $this->state->isRegistered( $s ) ) {
+
+            return;
+        }
+
+        $this->state->registerStore( $s, 364, true );
+        $this->state->migrateCookie( 's', $s, false );
+        $this->state->migrateCookie( 'b', $s, true );
+        $this->state->registerStore( 'ss_' . $this->getSiteId(), null );
+    }
+
+    /**
+     * A value from the pre-1.x ss_<siteId> store: 's' (session id) or 'last_req'.
+     */
+    private function legacySessionValue( string $key ): mixed {
+
+        return $this->state->get( 'ss_' . $this->getSiteId(), $key );
+    }
+
+    private function manageState( TrackingEvent $event ): void {
 
         if ( ! $this->stateInit ) {
 
-            $this->setVisitorId( $event );
-            $this->setFirstSessionTimestamp( $event );
-            $this->setLastRequestTime( $event );
-            $this->setSessionId( $event );
-            $this->setNumberPriorSessions( $event );
-            $this->setDaysSinceLastSession( $event );
+            $this->initSessionStore();
+
+            $now = (int) ( $event->get( 'timestamp' ) ?: time() );
+
+            $this->setVisitorId();
+            $this->setFirstSessionTimestamp( $now );
+            // the session decision is made against the previous request,
+            // before the last-request time is advanced below
+            $this->setSessionId( $now );
+            $this->setNumberPriorSessions();
             $this->setTrafficAttribution( $event );
             $this->stateInit = true;
         }
+
+        // advanced for every event, so the session timeout measures inactivity
+        $this->state->set( $this->sessionStore(), 'last_req', (int) ( $event->get( 'timestamp' ) ?: time() ) );
     }
 
-    private function setVisitorId( &$event ) {
+    private function setVisitorId(): void {
 
-        $visitor_id =  $this->state->get( 'v', 'vid' );
+        $visitor_id = $this->state->get( 'v', 'vid' );
 
         if ( ! $visitor_id ) {
-            $visitor_id =  $this->state->get( 'v' );
-            $this->state->clear( 'v' );
-            $this->state->set( 'v', 'vid', $visitor_id, 'cookie', true );
 
+            // very old trackers stored the bare id as the whole cookie
+            $old = $this->state->get( 'v' );
+
+            if ( is_string( $old ) && $old !== '' ) {
+
+                $visitor_id = $old;
+                $this->state->replace( 'v', [] );
+            }
         }
 
         if ( ! $visitor_id ) {
-            $visitor_id = $event->getSiteSpecificGuid( $this->getSiteId() );
-            $this->setGlobalEventProperty( 'is_new_visitor', true );
-            $this->state->set( 'v', 'vid', $visitor_id, 'cookie', true );
+
+            $visitor_id = TrackingEvent::generateRandomGuid();
+
+            // session state: this session is the visitor's first
+            $this->state->set( $this->sessionStore(), 'is_new_visitor', true );
+            $this->pendingVisitorCreated = true;
+            sdk::debug( 'Creating new visitor id' );
         }
-        // set property on event object
-        $this->setGlobalEventProperty( 'visitor_id', $visitor_id );
+
+        $this->state->set( 'v', 'vid', (string) $visitor_id );
     }
 
-    private function setNumberPriorSessions( &$event ) {
-        // if check for nps value in vistor cookie.
-        $nps = $this->state->get('v', 'nps');
+    private function setFirstSessionTimestamp( int $now ): void {
 
-        // if new session, increment visit count and persist to state store
-        if ( $this->getGlobalEventProperty('is_new_session' ) ) {
+        if ( ! $this->state->get( 'v', 'fsts' ) ) {
 
-            // set value to 0 if not found.
-            if ( ! $nps ) {
+            $this->state->set( 'v', 'fsts', $now );
+        }
+    }
 
-                $nps = "0";
+    private function setSessionId( int $now ): void {
 
-            } else {
+        $s = $this->sessionStore();
 
-                $nps = $nps + 1;
+        $previous_request = $this->state->get( $s, 'last_req' )
+            ?? $this->state->getPersisted( $s, 'last_req' )
+            ?? $this->legacySessionValue( 'last_req' );
+
+        $is_new_session = $this->isNewSession( $now, (int) $previous_request );
+
+        if ( $is_new_session ) {
+
+            $prior_session_start = $this->state->getPersisted( $s, 'sts' );
+
+            if ( $prior_session_start ) {
+
+                $this->state->set( $s, 'psts', $prior_session_start );
             }
 
-            $this->state->set('v', 'nps', $nps, 'cookie', true);
-        }
+            $this->state->set( $s, 'sts', $now );
 
-        // set property on the event object
-        $this->setGlobalEventProperty('nps', $nps);
-    }
+            $prior_session_id = $this->state->getPersisted( $s, 'sid' ) ?: $this->legacySessionValue( 's' );
 
-    private function setFirstSessionTimestamp( &$event ) {
+            if ( $prior_session_id ) {
 
-        $fsts = $this->state->get( 'v', 'fsts' );
-
-        if ( ! $fsts ) {
-            $fsts = $event->get('timestamp');
-            $this->state->set($this->getSetting('visitor_param'), 'fsts', $fsts , 'cookie', true);
-        }
-
-        $this->setGlobalEventProperty( 'fsts', $fsts );
-
-        // calc days since first session
-        $dsfs = round( ( $fsts - $event->get( 'timestamp' ) ) / ( 3600 * 24 ) ) ;
-        $this->state->set($this->getSetting( 'visitor_param' ), 'dsfs', $dsfs , 'cookie', true);
-        $this->setGlobalEventProperty( 'dsfs', $dsfs );
-    }
-
-    private function setDaysSinceLastSession( &$event ) {
-
-        sdk::debug('setting days since last session.');
-        $dsps = '';
-        if ( $this->getGlobalEventProperty( 'is_new_session' ) ) {
-            sdk::debug( 'timestamp: ' . $event->get( 'timestamp' ) );
-            $last_req = $this->getGlobalEventProperty( 'last_req' );
-            if ( ! $last_req ) {
-                $last_req = $event->get( 'timestamp' );
-            }
-            sdk::debug( 'last_req: ' . $last_req );
-            $dsps = round( ( $event->get( 'timestamp' ) - $last_req ) / ( 3600*24 ) );
-            $this->state->set('s', 'dsps', $dsps , 'cookie', true);
-        }
-
-        if ( ! $dsps ) {
-            $dsps = $this->state->get( 's', 'dsps' );
-
-            if ( ! $dsps ) {
-                $dsps = 0;
+                $this->state->set( $s, 'prior_session_id', (string) $prior_session_id );
             }
         }
 
-        $this->setGlobalEventProperty( 'dsps', $dsps );
-    }
+        // a new session discards what the cookie holds; a continuing one merges it in
+        $this->state->settle( $s, $is_new_session );
 
-    private function setSessionId( &$event ) {
+        if ( $is_new_session ) {
 
-        $is_new_session = $this->isNewSession( $event->get( 'timestamp' ),  $this->getGlobalEventProperty( 'last_req' ) );
-        
-        // if its a new seession based on time or if there is no prior session ID found, make a new session
-        if ( $is_new_session || ! $this->getSessionId() ) {
-	        
-	        sdk::debug("is new session");
-	        
-            //set prior_session_id
-            $prior_session_id = $this->getSessionId();
-            
-            if ( ! $prior_session_id ) {
-	            
-                $state_store_name = sprintf('%s_%s', $this->getSetting('site_session_param'), $this->getSiteId() );
-                
-                $prior_session_id = $this->state->get($state_store_name, 's');
-                
-            } else {
-	            
-                $this->setGlobalEventProperty( 'prior_session_id', $prior_session_id );
-            }
+            sdk::debug( 'This request is the start of a new session.' );
+            $session_id = TrackingEvent::generateRandomGuid();
+            $this->markNewSession();
 
-            $this->resetSessionState();
-			
-			// generate new session id
-            $session_id = $event->getSiteSpecificGuid( $this->getSiteId() );
-
-            //mark new session flag on current request
-            $this->setGlobalEventProperty( 'is_new_session', true );
-            
         } else {
-	        
-	        sdk::debug("is existing session");
-	        
-            // Must be an active session so just pull the session id from the state store
-            $session_id = $this->getSessionId();
 
+            sdk::debug( 'This request is part of an active session.' );
+            $session_id = $this->state->get( $s, 'sid' ) ?: $this->legacySessionValue( 's' );
+
+            // fail-safe: an active session without an id
+            if ( ! $session_id ) {
+
+                $session_id = TrackingEvent::generateRandomGuid();
+                $this->markNewSession();
+
+                if ( ! $this->state->get( $s, 'sts' ) ) {
+
+                    $this->state->set( $s, 'sts', $now );
+                }
+            }
         }
 
-        // set global event property
-        $this->setGlobalEventProperty( 'session_id', $session_id );
-        // set sid state
-        $this->state->set( 's', 'sid', $session_id, 'cookie', true );
+        $this->state->set( $s, 'sid', (string) $session_id );
+
+        // The previous request's time, sent as last_req. Captured once: on a
+        // later page of the same session it hydrates from the cookie.
+        if ( $this->state->get( $s, 'prior_last_req' ) === null ) {
+
+            $this->state->set( $s, 'prior_last_req', $previous_request ?? '' );
+        }
     }
-    
-    public function getSessionId() {
-	    
-	    return $this->state->get('s', 'sid');
+
+    private function markNewSession(): void {
+
+        $this->page_state['is_new_session'] = true;
+        $this->pendingSessionStart = true;
+        $this->isNewSessionFlag = true;
     }
 
-    private function setLastRequestTime( &$event ) {
+    public function getSessionId(): ?string {
 
-        $last_req = $this->state->get('s', 'last_req');
+        $s = $this->sessionStore();
+        $sid = $this->state->get( $s, 'sid' ) ?? $this->state->getPersisted( $s, 'sid' );
 
-        // set property on event object
-        $this->setGlobalEventProperty( 'last_req', $last_req );
-        sdk::debug("setting last_req value of $last_req as global event property.");
-        // store new state value
-        $this->state->set( 's', 'last_req', $event->get( 'timestamp' ), 'cookie', true );
+        return $sid === null ? null : (string) $sid;
     }
 
     /**
      * Check to see if request is a new or active session
-     *
-     * @return boolean
      */
-    private function isNewSession($timestamp = '', $last_req = 0) {
-		
-        $is_new_session = false;
+    private function isNewSession( int $timestamp = 0, int $last_req = 0 ): bool {
 
         if ( ! $timestamp ) {
+
             $timestamp = time();
         }
 
-        $time_since_lastreq = $timestamp - $last_req;
-        $len = $this->getSetting( 'session_length' );
-        if ( $time_since_lastreq < $len ) {
-            sdk::debug("This request is part of an active session.");
-            return false;
-        } else {
-            //NEW SESSION. prev session expired, because no requests since some time.
-            sdk::debug("This request is the start of a new session. Prior session expired.");
-            return true;
+        return ( $timestamp - $last_req ) >= (int) $this->getSetting( 'session_length' );
+    }
+
+    private function setNumberPriorSessions(): void {
+
+        if ( ! $this->isNewSessionFlag ) {
+
+            return;
         }
+
+        $nps = $this->state->get( 'v', 'nps' );
+
+        // "0" on the first session: a string, as the JS tracker stores it
+        $nps = ( $nps === null || $nps === '' ) ? '0' : (int) $nps + 1;
+
+        $this->state->set( 'v', 'nps', $nps );
     }
 
     /**
@@ -371,140 +428,276 @@ class TrackerClient extends OwaClient {
      * This function processes a tracking event by adding full state and global properties to it
      * Typically used by syncronous events such as Pageviews
      *
-     * @param object $event
-     * @return boolean
+     * @return bool true when OWA accepted the request
      */
-    public function trackEvent( $event ) {
+    public function trackEvent( TrackingEvent $event ): bool {
 
-        // do not track anything if user is in overlay mode
-        if ($this->state->get('overlay')) {
+        if ( ! $this->getSiteId() ) {
+
+            sdk::debug( 'No site id set. Call setSiteId() before tracking.' );
             return false;
         }
 
-        $this->setGlobalEventProperty( 'HTTP_REFERER', $this->getServerParam('HTTP_REFERER') );
-        
-		$this->setGlobalEventProperty( 'HTTP_USER_AGENT', $this->getServerParam('HTTP_USER_AGENT') );
+        if ( $this->getSetting( 'respect_do_not_track' ) && $this->getServerParam( 'HTTP_DNT' ) === '1' ) {
+
+            sdk::debug( 'Not tracking: the browser sent DNT: 1.' );
+            return false;
+        }
 
         // set various state properties.
         $this->manageState( $event );
 
         $event = $this->setAllGlobalEventProperties( $event );
 
-        // log event to server
-        return $this->logEvent($event->getEventType(), $event);
+        $accepted = $this->logEvent( $event, true );
+
+        // the session store reaches the cookie only once a request carrying it is accepted
+        if ( $accepted ) {
+
+            $this->state->persist( $this->sessionStore() );
+        }
+
+        return $accepted;
     }
-    
+
     /**
      * Tracks Event without state or globals
      *
      * This function processes a raw tracking event without any state or globals added to it
-     * Typically used by asyncronous events such as Delayed commerce transactions or programaticly derived events
+     * Typically used by asyncronous events such as Delayed commerce transactions or programaticly derived events.
+     * The current request's IP and user agent are not forwarded, since they are
+     * not the visitor's; use setIpAddress() / setUserAgent() to supply them.
      *
-     * @param object $event
-     * @return boolean
+     * @return bool true when OWA accepted the request
      */
-    public function trackStatelessEvent( $event ) {
-	    
-	    $event->set( 'site_id', $this->getSiteId() );
-	    
-	    // log event to server.
-        return $this->logEvent( $event->getEventType(), $event );
+    public function trackStatelessEvent( TrackingEvent $event ): bool {
+
+        $event->set( 'site_id', $this->getSiteId() );
+
+        // log event to server.
+        return $this->logEvent( $event, false );
     }
-	
-	/**
+
+    /**
      * Add Global properties to Tracking Event
      *
-     * This function add global properties to the tracking event
-     *
-     * @param object $event
-     * @return $event
+     * Precedence: a property set on the event, then global properties, then
+     * page, state and custom variable properties.
      */
-    public function setAllGlobalEventProperties( $event ) {
+    public function setAllGlobalEventProperties( TrackingEvent $event ): TrackingEvent {
 
-        if ( ! $event->get('site_id') ) {
+        if ( ! $event->get( 'site_id' ) ) {
+
             $event->set( 'site_id', $this->getSiteId() );
         }
 
-        // add custom variables to global properties if not there already
-        for ( $i=1; $i <= $this->getSetting( 'maxCustomVars' ); $i++ ) {
-            $cv_param_name = 'cv' . $i;
-            $cv_value = '';
+        // one-event flags
+        if ( $this->pendingSessionStart ) {
 
-            // if the custom var is not already a global property
-            if ( ! $this->getGlobalEventProperty( $cv_param_name ) ) {
-                // check to see if it exists
-                $cv_value = $this->getCustomVar( $i );
-                // if so add it
-                if ( $cv_value ) {
-                    $this->setGlobalEventProperty( $cv_param_name, $cv_value );
-                }
+            $this->pendingSessionStart = false;
+
+            if ( ! $event->isSet( 'is_new_session_start' ) ) {
+
+                $event->set( 'is_new_session_start', true );
             }
         }
 
-        // merge global event properties
+        if ( $this->pendingVisitorCreated ) {
+
+            $this->pendingVisitorCreated = false;
+
+            if ( ! $event->isSet( 'is_new_visitor_created' ) ) {
+
+                $event->set( 'is_new_visitor_created', true );
+            }
+        }
+
         $event->setNewProperties( $this->global_event_properties );
+        $event->setNewProperties( $this->collectPageProperties() + $this->collectStateProperties() + $this->collectCustomVars() );
 
         return $event;
-
     }
 
-    public function getAllEventProperties( $event ) {
+    /**
+     * @return array<string, mixed>
+     */
+    public function getAllEventProperties( TrackingEvent $event ): array {
 
         $event = $this->setAllGlobalEventProperties( $event );
         return $event->getProperties();
     }
 
-    public function trackPageview($event = '') {
+    /**
+     * @return array<string, mixed>
+     */
+    private function collectPageProperties(): array {
 
-        if ($event) {
-            $event->setEventType('base.page_request');
+        $collected = [
+            'page_url'      => $this->getCurrentUrl(),
+            'HTTP_REFERER'  => (string) $this->getServerParam( 'HTTP_REFERER' ),
+        ];
+
+        foreach ( $this->page_state as $k => $v ) {
+
+            if ( ! preg_match( '/^cv[0-9]+$/', $k ) ) {
+
+                $collected[ $k ] = $v;
+            }
+        }
+
+        return $collected;
+    }
+
+    /**
+     * Properties read from the state stores, as the JS tracker's
+     * collectStateProperties().
+     *
+     * @return array<string, mixed>
+     */
+    private function collectStateProperties(): array {
+
+        if ( ! $this->stateInit ) {
+
+            return [];
+        }
+
+        $s = $this->sessionStore();
+
+        $map = [
+            [ 'v', 'vid', 'visitor_id' ],
+            [ 'v', 'nps', 'nps' ],
+            [ $s, 'sid', 'session_id' ],
+            [ $s, 'referer', 'session_referer' ],
+            [ $s, 'landing_url', 'landing_url' ],
+            [ $s, 'prior_session_id', 'prior_session_id' ],
+            [ $s, 'is_new_visitor', 'is_new_visitor' ],
+            [ $s, 'psts', 'psts' ],
+            [ $s, 'sts', 'sts' ],
+        ];
+
+        $collected = [];
+
+        foreach ( $map as [ $store, $key, $name ] ) {
+
+            $value = $this->state->get( $store, $key );
+
+            if ( $value !== null && $value !== '' ) {
+
+                $collected[ $name ] = $value;
+            }
+        }
+
+        // present as '' on a visitor's first request
+        $prior_last_req = $this->state->get( $s, 'prior_last_req' );
+
+        if ( $prior_last_req !== null ) {
+
+            $collected['last_req'] = $prior_last_req;
+        }
+
+        $attribs = $this->getCampaignState();
+
+        if ( $attribs ) {
+
+            $collected['attribs'] = json_encode( $attribs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+        }
+
+        $fsts = $this->state->get( 'v', 'fsts' );
+
+        if ( $fsts ) {
+
+            $collected['fsts'] = $fsts;
+        }
+
+        $user_name = $this->state->get( 'v', 'user_name' );
+
+        if ( $user_name ) {
+
+            $collected['user_name'] = $user_name;
+        }
+
+        return $collected;
+    }
+
+    /**
+     * Custom variables from every scope; the narrowest wins.
+     *
+     * @return array<string, string>
+     */
+    private function collectCustomVars(): array {
+
+        $collected = [];
+        $max = (int) $this->getSetting( 'maxCustomVars' );
+
+        for ( $slot = 1; $slot <= $max; $slot++ ) {
+
+            $value = $this->getCustomVar( $slot );
+
+            if ( $value ) {
+
+                $collected[ 'cv' . $slot ] = $value;
+            }
+        }
+
+        return $collected;
+    }
+
+    public function trackPageview( ?TrackingEvent $event = null ): bool {
+
+        if ( $event ) {
+
+            $event->setEventType( 'base.page_request' );
             $this->pageview_event = $event;
         }
-        return $this->trackEvent($this->pageview_event);
+
+        return $this->trackEvent( $this->pageview_event );
     }
-    
-    public function trackSyndicationFeed( $feed_format = 'rss', $feed_subscription_id = '') {
-        
+
+    public function trackSyndicationFeed( string $feed_format = 'rss', string $feed_subscription_id = '' ): bool {
+
         $event = $this->makeEvent();
-        
-        $event->setEventType('base.feed_request');
+
+        $event->setEventType( 'base.feed_request' );
         $event->set( 'feed_format', $feed_format );
         $event->set( 'feed_subscription_id', $feed_subscription_id );
-       
+
         // track
-        return $this->trackEvent( $event );	
+        return $this->trackEvent( $event );
     }
 
-    public function trackAction($action_name, $action_group = '', $action_label = '', $numeric_value = 0) {
+    public function trackAction( string $action_name, string $action_group = '', string $action_label = '', int|float|string $numeric_value = 0 ): bool {
 
         $event = $this->makeEvent();
-        $event->setEventType('track.action');
-        $event->set('action_group', $action_group);
-        $event->set('action_name', $action_name);
-        $event->set('action_label', $action_label);
-        $event->set('numeric_value', $numeric_value);
-        $event->set('site_id', $this->getSiteId());
-        return $this->trackEvent($event);
+        $event->setEventType( 'track.action' );
+        $event->set( 'action_group', $action_group );
+        $event->set( 'action_name', $action_name );
+        $event->set( 'action_label', $action_label );
+        $event->set( 'numeric_value', $numeric_value );
+        $event->set( 'site_id', $this->getSiteId() );
+        return $this->trackEvent( $event );
     }
 
     /**
      * Creates a ecommerce Transaction event
      *
-     * Creates a parent commerce.transaction event
+     * Creates a parent commerce.transaction event. $country, $state and $city
+     * are the billing address, sent as ct_country / ct_state / ct_city.
+     * Pass $session_id to attribute a delayed transaction to the session that
+     * placed the order; it is then tracked without the current request's state.
      */
     public function addTransaction(
-            $order_id,
-            $order_source = '',
-            $total = 0,
-            $tax = 0,
-            $shipping = 0,
-            $gateway = '',
-            $country = '',
-            $state = '',
-            $city = '',
-            $page_url = '',
-            $session_id = ''
-        ) {
+            string|int $order_id,
+            string $order_source = '',
+            int|float|string $total = 0,
+            int|float|string $tax = 0,
+            int|float|string $shipping = 0,
+            string $gateway = '',
+            string $country = '',
+            string $state = '',
+            string $city = '',
+            string $page_url = '',
+            string|int $session_id = ''
+        ): void {
 
         $this->commerce_event = $this->makeEvent();
         $this->commerce_event->setEventType( 'ecommerce.transaction' );
@@ -514,14 +707,18 @@ class TrackerClient extends OwaClient {
         $this->commerce_event->set( 'ct_tax', $tax );
         $this->commerce_event->set( 'ct_shipping', $shipping );
         $this->commerce_event->set( 'ct_gateway', $gateway );
-        $this->commerce_event->set( 'page_url', $page_url );
-        $this->commerce_event->set( 'ct_line_items', array() );
-        $this->commerce_event->set( 'country', $country );
-        $this->commerce_event->set( 'state', $state );
-        $this->commerce_event->set( 'city', $city );
-        
+        $this->commerce_event->set( 'ct_line_items', [] );
+        $this->commerce_event->set( 'ct_country', $country );
+        $this->commerce_event->set( 'ct_state', $state );
+        $this->commerce_event->set( 'ct_city', $city );
+
+        if ( $page_url ) {
+
+            $this->commerce_event->set( 'page_url', $page_url );
+        }
+
         if ( $session_id ) {
-            
+
             $this->commerce_event->set( 'original_session_id', $session_id );
         }
     }
@@ -531,22 +728,22 @@ class TrackerClient extends OwaClient {
      *
      * Creates and a commerce.line_item event and adds it to the parent transaction event
      */
-    public function addTransactionLineItem($order_id, $sku = '', $product_name = '', $category = '', $unit_price = 0, $quantity = 0) {
+    public function addTransactionLineItem( string|int $order_id, string|int $sku = '', string $product_name = '', string $category = '', int|float|string $unit_price = 0, int|float|string $quantity = 0 ): void {
 
         if ( empty( $this->commerce_event ) ) {
-            $this->addTransaction('none set');
+
+            $this->addTransaction( 'none set' );
         }
 
-        $li = array();
-        $li['li_order_id'] = $order_id ;
-        $li['li_sku'] = $sku ;
-        $li['li_product_name'] = $product_name ;
-        $li['li_category'] = $category ;
-        $li['li_unit_price'] = $unit_price ;
-        $li['li_quantity'] = $quantity ;
-
         $items = $this->commerce_event->get( 'ct_line_items' );
-        $items[] = $li;
+        $items[] = [
+            'li_order_id'       => $order_id,
+            'li_sku'            => $sku,
+            'li_product_name'   => $product_name,
+            'li_category'       => $category,
+            'li_unit_price'     => $unit_price,
+            'li_quantity'       => $quantity,
+        ];
         $this->commerce_event->set( 'ct_line_items', $items );
     }
 
@@ -555,361 +752,287 @@ class TrackerClient extends OwaClient {
      *
      * Tracks a parent transaction event by sending it to the event queue
      */
-    public function trackTransaction() {
+    public function trackTransaction(): bool {
 
-        if ( ! empty( $this->commerce_event ) ) {
-	        
-	        if ( $this->commerce_event->get( 'original_session_id' ) ) {
-		        
-		    	$this->trackStatelessEvent( $this->commerce_event );
-		    	    
-	        } else {
-            
-            	$this->trackEvent( $this->commerce_event );
-            }
-            $this->commerce_event = '';
+        if ( empty( $this->commerce_event ) ) {
+
+            return false;
         }
+
+        $event = $this->commerce_event;
+        $this->commerce_event = null;
+
+        if ( $event->get( 'original_session_id' ) ) {
+
+            return $this->trackStatelessEvent( $event );
+        }
+
+        return $this->trackEvent( $event );
     }
 
-    public function createSiteId($value) {
+    public function createSiteId( string $value ): string {
 
-        return md5($value);
+        return md5( $value );
     }
 
-    public function setCampaignNameKey( $key ) {
+    private function setCampaignKey( string $name, string $key ): void {
 
         $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'campaign' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $campaign_params[ $name ] = $key;
+        $this->setSetting( 'campaign_params', $campaign_params );
     }
 
-    public function setCampaignMediumKey( $key ) {
+    public function setCampaignNameKey( string $key ): void {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'medium' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $this->setCampaignKey( 'campaign', $key );
     }
 
-    public function setCampaignSourceKey( $key ) {
+    public function setCampaignMediumKey( string $key ): void {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'source' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $this->setCampaignKey( 'medium', $key );
     }
 
-    public function setCampaignSearchTermsKey( $key ) {
+    public function setCampaignSourceKey( string $key ): void {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'search_terms' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $this->setCampaignKey( 'source', $key );
     }
 
-    public function setCampaignAdKey( $key ) {
+    public function setCampaignSearchTermsKey( string $key ): void {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'ad' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $this->setCampaignKey( 'search_terms', $key );
     }
 
-    public function setCampaignAdTypeKey( $key ) {
+    public function setCampaignAdKey( string $key ): void {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_params[ 'ad_type' ] = $key;
-        $this->setSetting('campaign_params', $campaign_params);
+        $this->setCampaignKey( 'ad', $key );
     }
 
-    public function setUserName( $value ) {
+    public function setCampaignAdTypeKey( string $key ): void {
 
-        $this->setGlobalEventProperty( 'user_name', $value );
+        $this->setCampaignKey( 'ad_type', $key );
     }
-    
-    public function setUserEmail( $value ) {
+
+    /**
+     * Stored on the visitor, so later requests carry it too.
+     */
+    public function setUserName( string $value ): void {
+
+        $this->state->set( 'v', 'user_name', $value );
+    }
+
+    public function setUserEmail( string $value ): void {
 
         $this->setGlobalEventProperty( 'user_email', $value );
     }
 
-    function getCampaignProperties( $event ) {
+    /**
+     * Campaign parameters on the event or the page URL, under their
+     * attribution-history keys (md, cn, sr, tr, ad, at).
+     *
+     * @return array<string, string>
+     */
+    public function getCampaignProperties( TrackingEvent $event ): array {
 
         $campaign_params = $this->getSetting( 'campaign_params' );
-        $campaign_properties = array();
-        $campaign_state = array();
-        
-        foreach ( $campaign_params as $k => $param ) {
+        $query = $this->getPageQueryParams();
+        $campaign_properties = [];
+
+        foreach ( self::CAMPAIGN_KEYS as $name => $short ) {
+
+            if ( empty( $campaign_params[ $name ] ) ) {
+
+                continue;
+            }
+
+            $param = strtolower( $campaign_params[ $name ] );
+
             //look for property on the event
             $property = $event->get( $param );
 
-            // look for property on the request scope.
-            if ( ! $property ) {
-                $property = $this->getRequestParam( $param );
+            // then on the page URL
+            if ( ! $property && isset( $query[ $param ] ) && is_string( $query[ $param ] ) ) {
+
+                $property = $query[ $param ];
             }
-            if ( $property ) {
-                $campaign_properties[ $k ] = $property;
+
+            if ( $property !== false && $property !== '' ) {
+
+                $campaign_properties[ $short ] = (string) $property;
             }
         }
 
         // backfill values for incomplete param combos
+        if ( isset( $campaign_properties['at'] ) && ! isset( $campaign_properties['ad'] ) ) {
 
-        if (array_key_exists('ad_type', $campaign_properties) && !array_key_exists('ad', $campaign_properties)) {
             $campaign_properties['ad'] = '(not set)';
         }
 
-        if (array_key_exists('ad', $campaign_properties) && !array_key_exists('ad_type', $campaign_properties)) {
-            $campaign_properties['ad_type'] = '(not set)';
-        }
+        if ( isset( $campaign_properties['ad'] ) && ! isset( $campaign_properties['at'] ) ) {
 
-        if (!empty($campaign_properties)) {
-            //$campaign_properties['ts'] = $event->get('timestamp');
+            $campaign_properties['at'] = '(not set)';
         }
-
-        sdk::debug('campaign properties: '. print_r($campaign_properties, true));
 
         return $campaign_properties;
     }
 
-    private function setCampaignSessionState( $properties ) {
+    /**
+     * Query parameters of the page being tracked, keys lower-cased as the
+     * JS tracker's parseUrlParams() does.
+     *
+     * @return array<string, mixed>
+     */
+    private function getPageQueryParams(): array {
 
-        $campaign_params = $this->getSetting( 'campaign_params' );
-        foreach ($campaign_params as $k => $v) {
+        $url = $this->getGlobalEventProperty( 'page_url' ) ?: $this->getCurrentUrl();
+        $query = parse_url( (string) $url, PHP_URL_QUERY );
 
-            if (array_key_exists( $k, $properties ) ) {
+        if ( ! $query ) {
 
-                $this->state->set( 's', $k, $properties[$k] );
-            }
-        }
-    }
-
-    function directAttributionModel( &$campaign_properties ) {
-
-        // add new campaign info to existing campaign cookie.
-        if ( $campaign_properties ) {
-
-            // get prior campaing touches from c cookie
-            $campaign_state = $this->getCampaignState();
-
-            // add new campaign into state array
-            $campaign_state[] = (object) $campaign_properties;
-
-            // if more than x slice the first one off to make room
-            $count = count( $campaign_state );
-            $max = $this->getSetting( 'max_prior_campaigns' );
-            if ($count > $max ) {
-                array_shift( $campaign_state );
-            }
-
-            // reset state
-            $this->setCampaignCookie($campaign_state);
-
-            // set flag
-            $this->isTrafficAttributed = true;
-
-            // persist state to session store
-            $this->setCampaignSessionState( $campaign_properties );
+            return [];
         }
 
+        parse_str( $query, $params );
+
+        return array_change_key_case( $params, CASE_LOWER );
     }
 
-    function originalAttributionModel( &$campaign_properties ) {
+    /**
+     * @param array<string, string> $campaign_properties
+     */
+    private function directAttributionModel( array $campaign_properties ): void {
+
+        if ( ! $campaign_properties ) {
+
+            return;
+        }
 
         $campaign_state = $this->getCampaignState();
-        // orignal touch was set previously. jus use that.
-        if (!empty($campaign_state)) {
-            // do nothing
-            // set the attributes from the first campaign touch
-            $campaign_properties = $campaign_state[0];
-            $this->isTrafficAttributed = true;
+        $campaign_state[] = $campaign_properties;
 
-        // no orginal touch, set one if it's a new campaign touch
-        } else {
+        // drop the oldest touches to make room
+        while ( count( $campaign_state ) > (int) $this->getSetting( 'max_prior_campaigns' ) ) {
 
-            if (!empty($campaign_properties)) {
-                // add timestamp
-                //$campaign_properties['ts'] = $event->get('timestamp');
-                sdk::debug('Setting original Campaign attrbution.');
-                $campaign_state[] = $campaign_properties;
-                // set cookie
-                $this->setCampaignCookie($campaign_state);
-                $this->isTrafficAttributed = true;
-            }
+            array_shift( $campaign_state );
         }
 
-        // persist state to session store
-        $this->setCampaignSessionState( $campaign_properties );
+        $this->setCampaignCookie( $campaign_state );
     }
 
-    function getCampaignState() {
+    /**
+     * @param array<string, string> $campaign_properties
+     */
+    private function originalAttributionModel( array $campaign_properties ): void {
+
+        // the original touch was recorded previously; keep it
+        if ( $this->getCampaignState() || ! $campaign_properties ) {
+
+            return;
+        }
+
+        $this->setCampaignCookie( [ $campaign_properties ] );
+    }
+
+    /**
+     * Prior campaign touches from the owa_c cookie.
+     *
+     * Touches written by SDK 1.0.x used long key names and a timestamp; they
+     * are read under the current keys.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getCampaignState(): array {
 
         $campaign_state = $this->state->get( 'c', 'attribs' );
-        if ( ! $campaign_state ) {
 
-            $campaign_state = array();
+        if ( ! is_array( $campaign_state ) ) {
+
+            return [];
         }
 
-        return $campaign_state;
-    }
+        $touches = [];
 
-    function setTrafficAttribution( &$event ) {
+        foreach ( $campaign_state as $touch ) {
 
-        // if not then look for individual campaign params on the request.
-        // this happens when the client is php and the params are on the url
-        $campaign_properties = $this->getCampaignProperties( $event );
-        if ( $campaign_properties ) {
-            $campaign_properties['ts'] = $event->get('timestamp');
-        }
+            if ( ! is_array( $touch ) ) {
 
-        // choose attribution model.
-        $model = $this->getSetting( 'trafficAttributionMode' );
-        switch ( $model ) {
-
-            case 'direct':
-                sdk::debug( 'Applying "Direct" Traffic Attribution Model' );
-                $this->directAttributionModel( $campaign_properties );
-                break;
-            case 'original':
-                sdk::debug( 'Applying "Original" Traffic Attribution Model' );
-                $this->originalAttributionModel( $campaign_properties );
-                break;
-            default:
-                sdk::debug( 'Applying Default (Direct) Traffic Attribution Model' );
-                $this->directAttributionModel( $campaign_properties );
-        }
-
-        // if one of the attribution methods attributes the traffic them
-        // set attribution properties on the event object
-        if ( $this->isTrafficAttributed ) {
-
-            sdk::debug( 'Attributing Traffic to: %s', print_r($campaign_properties, true ) );
-
-        } else {
-            // infer the attribution from the referer
-            // if the request is the start of a new session
-            if ( $this->getGlobalEventProperty( 'is_new_session' ) ) {
-                sdk::debug( 'Inferring traffic attribution.' );
-                $this->inferTrafficAttribution();
-            }
-        }
-
-        // apply traffic attribution realted properties to events
-        // all properties should be set in the state store by this point.
-        $campaign_params = $this->getSetting('campaign_params');
-        foreach( $campaign_params as $k => $v ) {
-
-            $value = $this->state->get( 's', $k );
-
-            if ( $value ) {
-                $this->setGlobalEventProperty( $k, $value );
-            }
-        }
-
-        // set sesion referer
-        $session_referer = $this->state->get('s', 'referer');
-        if ( $session_referer ) {
-
-            $this->setGlobalEventProperty( 'session_referer', $session_referer );
-        }
-
-        // set campaign touches
-        $campaign_state = $this->state->get('c', 'attribs');
-        if ( $campaign_state ) {
-
-            $this->setGlobalEventProperty( 'attribs', json_encode( $campaign_state ));
-        }
-    }
-
-    private function inferTrafficAttribution() {
-
-        $ref = $this->getServerParam('HTTP_REFERER');
-        $medium = 'direct';
-        $source = '(none)';
-        $search_terms = '(none)';
-        $session_referer = '(none)';
-
-        if ( $ref ) {
-            $uri = $this->parse_url( $ref );
-
-            // check for external referer
-            $host = $this->getServerParam('HTTP_HOST');
-            if ( $host != $uri['host'] ) {
-
-                $medium = 'referral';
-                $source = $this->stripWwwFromDomain( $uri['host'] );
-                $engine = $this->isRefererSearchEngine( $uri );
-                $session_referer = $ref;
-                if ( $engine ) {
-                    $medium = 'organic-search';
-                    $search_terms = $engine['t'];
-                }
-            }
-        }
-
-        $this->state->set('s', 'referer', $session_referer);
-        $this->state->set('s', 'medium', $medium);
-        $this->state->set('s', 'source', $source);
-        $this->state->set('s', 'search_terms', $search_terms);
-    }
-    
-
-    private function isRefererSearchEngine( $uri ) {
-
-        if ( !isset( $uri['host'] ) ) {
-            return null;
-        }
-
-        $host = $uri['host'];
-
-        $searchEngine = [];
-
-        foreach ( $this->organicSearchEngines as $engine ) {
-            $domain = $engine['d'];
-
-            if (strpos($host, $domain) === false) {
                 continue;
             }
 
-            $query_param = $engine['q'];
-            $term = '';
+            $normalized = [];
 
-            if (isset($uri['query_params'][$query_param])) {
-                $term = $uri['query_params'][$query_param];
+            foreach ( $touch as $k => $v ) {
+
+                if ( $k === 'ts' ) {
+
+                    continue;
+                }
+
+                $normalized[ self::CAMPAIGN_KEYS[ $k ] ?? $k ] = $v;
             }
 
-            sdk::debug( 'Found search engine: %s with query param %s:, query term: %s', $domain, $query_param, $term);
-
-            $searchEngine = ['d' => $domain, 'q' => $query_param, 't' => $term];
-            break;
+            $touches[] = $normalized;
         }
 
-        return $searchEngine;
+        return $touches;
     }
 
-    function setCampaignCookie($values) {
-        // reset state
-        $this->state->set('c', 'attribs', $values);
+    private function setTrafficAttribution( TrackingEvent $event ): void {
+
+        $campaign_properties = $this->getCampaignProperties( $event );
+
+        // choose attribution model.
+        if ( $this->getSetting( 'trafficAttributionMode' ) === 'original' ) {
+
+            $this->originalAttributionModel( $campaign_properties );
+
+        } else {
+
+            $this->directAttributionModel( $campaign_properties );
+        }
+
+        // the server parses campaign tags out of the landing URL
+        if ( $this->isNewSessionFlag ) {
+
+            $this->state->set( $this->sessionStore(), 'referer', (string) $this->getServerParam( 'HTTP_REFERER' ) );
+            $this->state->set( $this->sessionStore(), 'landing_url', $this->getGlobalEventProperty( 'page_url' ) ?: $this->getCurrentUrl() );
+        }
+    }
+
+    /**
+     * @param list<array<string, mixed>> $values
+     */
+    public function setCampaignCookie( array $values ): void {
+
+        $this->state->set( 'c', 'attribs', $values );
     }
 
     // sets cookies domain
-    function setCookieDomain($domain) {
+    public function setCookieDomain( string $domain ): void {
 
-        if (!empty($domain)) {
-           
-            $this->setCookieDomainName($domain);
+        if ( $domain !== '' ) {
+
+            $domain = self::resolveCookieDomain( $domain );
+            $this->setSetting( 'cookie_domain', $domain );
+            $this->state->setSetting( 'cookie_domain', $domain );
         }
     }
 
     /**
      * Set a custom variable
      *
-     * @param    slot    int        the identifying number for the custom variable. 1-5.
-     * @param    name    string    the key of the custom variable.
-     * @param    value    string    the value of the varible
-     * @param    scope    string    the scope of the variable. can be page, session, or visitor
+     * @param    int    $slot   the identifying number for the custom variable. 1-5.
+     * @param    string $name   the key of the custom variable.
+     * @param    string $value  the value of the varible
+     * @param    string $scope  page (the default), session, or visitor
      */
-    public function setCustomVar( $slot, $name, $value, $scope = '' ) {
+    public function setCustomVar( int $slot, string $name, string $value, string $scope = 'page' ): void {
 
         $cv_param_name = 'cv' . $slot;
         $cv_param_value = $name . '=' . $value;
 
         if ( strlen( $cv_param_value ) > 65 ) {
-            sdk::debug('Custom variable name + value is too large. Must be less than 64 characters.');
+
+            sdk::debug( 'Custom variable name + value is too large. Must be less than 64 characters.' );
             return;
         }
 
@@ -917,329 +1040,280 @@ class TrackerClient extends OwaClient {
 
             case 'session':
 
-                // store in session cookie
-                $this->state->set( 'b', $cv_param_name, $cv_param_value );
-                sdk::debug( 'just set custom var on session.' );
+                if ( ! $this->getSiteId() ) {
+
+                    sdk::debug( 'Set the site id before setting a session-scoped custom variable.' );
+                    return;
+                }
+
+                $this->initSessionStore();
+                $this->state->set( $this->sessionStore(), $cv_param_name, $cv_param_value );
+                unset( $this->page_state[ $cv_param_name ] );
+                $this->state->clear( 'b', $cv_param_name );
                 break;
 
             case 'visitor':
 
-                // store in visitor cookie
                 $this->state->set( 'v', $cv_param_name, $cv_param_value );
-                // remove slot from session level cookie
+                unset( $this->page_state[ $cv_param_name ] );
+
+                if ( $this->getSiteId() ) {
+
+                    $this->initSessionStore();
+                    $this->state->clear( $this->sessionStore(), $cv_param_name );
+                }
+
                 $this->state->clear( 'b', $cv_param_name );
                 break;
-        }
 
-        $this->setGlobalEventProperty( $cv_param_name, $cv_param_value );
+            default:
+
+                $this->page_state[ $cv_param_name ] = $cv_param_value;
+        }
     }
 
-    public function getCustomVar( $slot ) {
+    public function getCustomVar( int $slot ): string {
 
         $cv_param_name = 'cv' . $slot;
-        $cv = '';
+
         // check request/page level
-        $cv = $this->getGlobalEventProperty( $cv_param_name );
+        $cv = $this->getGlobalEventProperty( $cv_param_name ) ?: ( $this->page_state[ $cv_param_name ] ?? null );
+
         //check session store
-        if ( ! $cv ) {
-            $cv = $this->state->get( 'b', $cv_param_name );
+        if ( ! $cv && $this->getSiteId() ) {
+
+            $cv = $this->state->get( $this->sessionStore(), $cv_param_name );
         }
+
         // check visitor store
         if ( ! $cv ) {
+
             $cv = $this->state->get( 'v', $cv_param_name );
         }
 
-        return $cv;
-
+        return (string) $cv;
     }
 
-    public function deleteCustomVar( $slot ) {
+    public function deleteCustomVar( int $slot ): void {
 
         $cv_param_name = 'cv' . $slot;
-        //clear session level
+        unset( $this->page_state[ $cv_param_name ] );
+
+        if ( $this->getSiteId() ) {
+
+            $this->state->clear( $this->sessionStore(), $cv_param_name );
+        }
+
         $this->state->clear( 'b', $cv_param_name );
         //clear visitor level
         $this->state->clear( 'v', $cv_param_name );
         // clear page level
         $this->deleteGlobalEventProperty( $cv_param_name );
 
-        sdk::debug("Deleting custom variable named $cv_param_name in slot $slot.");
+        sdk::debug( "Deleting custom variable named $cv_param_name in slot $slot." );
     }
 
-    private function resetSessionState() {
-
-        $last_req = $this->state->get( 's', 'last_req' );
-        $this->state->clear( 's' );
-        $this->state->set( 's', 'last_req', $last_req);
-    }
-
-    public function addOrganicSearchEngine( $domain, $query_param, $prepend = '' ) {
-
-        $engine = array('d' => $domain, 'q' => $query_param);
-        if ( $prepend) {
-            array_unshift($this->organicSearchEngines, $engine );
-        } else {
-                $this->organicSearchEngines[] = $engine;
-        }
-    }
-    
-    private function registerStateStore( $name, $expiration, $length = '', $format = '', $type = 'cookie', $cdh_required = ''  ) {
-	
-        return $this->state->registerStore( $name, $expiration, $length, $format, $type, $cdh_required );
-
-    }
-    
     /**
-     * sets and checks the cookie domain setting
-     *
-     * @param unknown_type $domain
+     * @deprecated OWA infers organic search on the server; the tracker no longer does.
      */
-    private function setCookieDomainName ($domain = '') {
-
-        $explicit = false;
-
-        if ( ! $domain ) {
-            $domain = $this->getServerParam('HTTP_HOST');
-            $explicit = true;
-        }
-
-        // strip port, add leading period etc.
-        $domain = $this->sanitizeCookieDomain($domain);
-
-        // Set the cookie domain only if the domain name is a Fully qualified domain name (FQDN)
-        // i.e. avoid attempts to set cookie domain for e.g. "localhost" as that is not valid
-
-        //check for two dots in the domain name
-        $twodots = substr_count($domain, '.');
-
-        if ( $twodots >= 2 ) {
-
-            // unless www.domain.com is passed explicitly
-            // strip the www from the domain.
-            if ( ! $explicit ) {
-                $part = substr( $domain, 0, 5 );
-                if ($part === '.www.') {
-                    //strip .www.
-                    $domain = substr( $domain, 5);
-                    // add back the leading period
-                    $domain = '.'.$domain;
-                }
-            }
-
-            $this->setSetting( 'cookie_domain', $domain );
-            sdk::debug("Setting cookie domain to $domain");
-         } else {
-             sdk::debug("Not setting cookie domain as $domain is not a FQDN.");
-         }
-     }
-     
-     private function sanitizeCookieDomain($domain) {
-
-        // Remove port information.
-         $port = strpos( $domain, ':' );
-        if ( $port ) {
-            $domain = substr( $domain, 0, $port );
-        }
-
-        // check for leading period, add if missing
-        $period = substr( $domain, 0, 1);
-        if ( $period != '.' ) {
-            $domain = '.'.$domain;
-        }
-
-        return $domain;
-    }
-    
-    private function stripWWWFromDomain($domain) {
-
-        $done = false;
-        $part = substr( $domain, 0, 5 );
-        if ($part === '.www.') {
-            //strip .www.
-            $domain = substr( $domain, 5);
-            // add back the leading period
-            $domain = '.'.$domain;
-            $done = true;
-        }
-
-        if ( ! $done ) {
-            $part = substr( $domain, 0, 4 );
-            if ($part === 'www.') {
-                //strip .www.
-                $domain = substr( $domain, 4);
-                $done = true;
-            }
-
-        }
-
-        return $domain;
+    public function addOrganicSearchEngine( string $domain, string $query_param, bool $prepend = false ): void {
     }
 
     /**
      *  Use this function to parse out the url and query array element from
      *  a url.
-     */
-    public static function parse_url( $url ) {
-
-        $url = parse_url($url);
-
-        if ( isset( $url['query'] ) ) {
-            $var = $url['query'];
-
-            $var  = html_entity_decode($var);
-            $var  = explode('&', $var);
-            $arr  = array();
-
-              foreach( $var as $val ) {
-
-                if ( strpos($val, '=') ) {
-                    $x = explode('=', $val);
-
-                    if ( isset( $x[1] ) ) {
-                        $arr[$x[0]] = urldecode($x[1]);
-                    }
-                } else {
-                    $arr[$val] = '';
-                }
-               }
-              unset($val, $x, $var);
-
-              $url['query_params'] = $arr;
-
-        }
-
-          return $url;
-    }
-    
-    public function getServerParam( $key ) {
-	    
-	    if ( isset( $_SERVER ) && array_key_exists( $key, $_SERVER ) ) {
-		    
-		    return $_SERVER[ $key ];
-	    }
-    }
-
-	/**
-     * Assembles the current URL from request params
      *
-     * @return string
+     * @return array<string, mixed>
      */
-    private function getCurrentUrl() {
+    public static function parse_url( string $url ): array {
 
-        $url = 'http';
+        $parts = parse_url( $url );
 
-        // check for https
-        if( isset( $_SERVER['HTTPS'] ) && strtolower( $_SERVER['HTTPS'] ) == 'on') {
-            $url.= 's';
-        } elseif ( isset( $_SERVER['SERVER_PORT'] ) && $_SERVER['SERVER_PORT'] == 443 ) {
-            $url.= 's';
-        } elseif ( isset( $_SERVER['HTTP_ORIGIN'] ) && substr( $_SERVER['HTTP_ORIGIN'], 0, 5 ) === 'https' ) {
-            $url.= 's';
-        } elseif ( isset( $_SERVER['HTTP_REFERER'] ) && substr( $_SERVER['HTTP_REFERER'], 0, 5 ) === 'https' ) {
-            $url.= 's';
+        if ( ! is_array( $parts ) ) {
+
+            return [];
         }
 
-        if ( isset( $_SERVER['HTTP_HOST'] ) ) {
-            // contains port number
-            $domain = $_SERVER['HTTP_HOST'];
+        if ( isset( $parts['query'] ) ) {
+
+            parse_str( html_entity_decode( $parts['query'] ), $params );
+            $parts['query_params'] = $params;
+        }
+
+        return $parts;
+    }
+
+    public function getServerParam( string $key ): mixed {
+
+        return $_SERVER[ $key ] ?? null;
+    }
+
+    /**
+     * Assembles the current URL from request params
+     */
+    private function getCurrentUrl(): string {
+
+        $host = $this->getServerParam( 'HTTP_HOST' );
+
+        if ( ! $host ) {
+
+            $name = $this->getServerParam( 'SERVER_NAME' );
+
+            if ( ! $name ) {
+
+                return '';
+            }
+
+            $port = (int) $this->getServerParam( 'SERVER_PORT' );
+            $host = $name . ( $port && $port !== 80 && $port !== 443 ? ':' . $port : '' );
+        }
+
+        $https = strtolower( (string) $this->getServerParam( 'HTTPS' ) );
+        $secure = ( $https && $https !== 'off' )
+            || (int) $this->getServerParam( 'SERVER_PORT' ) === 443
+            || strtolower( (string) $this->getServerParam( 'HTTP_X_FORWARDED_PROTO' ) ) === 'https';
+
+        return ( $secure ? 'https' : 'http' ) . '://' . $host . ( $this->getServerParam( 'REQUEST_URI' ) ?? '/' );
+    }
+
+    /**
+     * Headers that let OWA attribute a request to the visitor rather than to
+     * this server: OWA reads the IP, user agent and language from the request,
+     * never from event properties.
+     *
+     * @return array<string, string>
+     */
+    private function visitorHeaders( bool $from_request ): array {
+
+        $headers = [];
+
+        $ua = $this->user_agent ?? ( $from_request ? $this->getServerParam( 'HTTP_USER_AGENT' ) : null );
+        $headers['User-Agent'] = $ua ? (string) $ua : self::USER_AGENT;
+
+        $ip = $this->ip_address;
+
+        if ( $ip === null && $from_request ) {
+
+            $chain = array_filter( [
+                trim( (string) $this->getServerParam( 'HTTP_X_FORWARDED_FOR' ) ),
+                trim( (string) $this->getServerParam( 'REMOTE_ADDR' ) ),
+            ] );
+
+            $ip = $chain ? implode( ', ', $chain ) : null;
+        }
+
+        if ( $ip ) {
+
+            $headers['X-Forwarded-For'] = $ip;
+        }
+
+        $language = $from_request ? $this->getServerParam( 'HTTP_ACCEPT_LANGUAGE' ) : null;
+
+        if ( $language ) {
+
+            $headers['Accept-Language'] = (string) $language;
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Sends an event to log.php.
+     *
+     * GET normally; a POST form body when the URL would exceed
+     * GET_CHARACTER_LIMIT. log.php answers before processing the event (a GIF
+     * for GET, a redirect for POST), so acceptance means the request was
+     * received, not that the event was stored.
+     */
+    private function logEvent( TrackingEvent $event, bool $from_request ): bool {
+
+        $params = $event->getProperties();
+        $params['event_type'] = $event->getEventType();
+
+        $params = $this->ns( self::wireValues( $params ) );
+        $query = http_build_query( $params, '', '&', PHP_QUERY_RFC3986 );
+
+        $url = $this->getSetting( 'instance_url' ) . self::LOG_ENDPOINT;
+
+        $headers = $this->visitorHeaders( $from_request ) + [
+            'Accept' => 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        ];
+
+        $this->last_errors = [];
+
+        if ( strlen( $url ) + 1 + strlen( $query ) > self::GET_CHARACTER_LIMIT ) {
+
+            $method = 'POST';
+            $headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            $res = $this->send( $method, $url, $headers, $query );
+
         } else {
-            // does not contain port number.
-            $domain = $_SERVER['SERVER_NAME'];
-            if( $_SERVER['SERVER_PORT'] != 80 ) {
-                $domain .= ':' . $_SERVER['SERVER_PORT'];
+
+            $method = 'GET';
+            $res = $this->send( $method, $url . '?' . $query, $headers );
+        }
+
+        $accepted = $res->status >= 200 && $res->status < 400;
+
+        if ( ! $accepted && $res->status !== 0 ) {
+
+            $this->last_errors = [ "HTTP {$res->status}" ];
+            $this->logFailure( $method, $url, $res );
+        }
+
+        return $accepted;
+    }
+
+    /**
+     * Wire encoding as the JS tracker sends it: true as 'true', false and null
+     * left out.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private static function wireValues( array $params ): array {
+
+        $out = [];
+
+        foreach ( $params as $k => $v ) {
+
+            if ( $v === null || $v === false ) {
+
+                continue;
             }
-        }
 
-        $url .= '://'.$domain;
+            if ( $v === true ) {
 
-        $url .= $_SERVER['REQUEST_URI'];
+                $v = 'true';
 
-        return $url;
-    }
+            } elseif ( is_array( $v ) ) {
 
-	private function logEvent($event_type, $event) {
-		
-		sdk::debug('implement logEvent method');
-
-		$conf = [
-			
-			'base_uri' => $this->getSetting('instance_url')
-		];
-		
-		$http = $this->getHttpClient( $conf );
-		$params = $event->getProperties();
-		$params['event_type'] = $event->getEventType();
-		
-		$params = $this->applyNamespaceToKeys( $params );
-		
-        try {
-		    $res = $http->request(
-			    'GET', 'log.php', 
-			    [
-                    'query' => $params,
-                    'headers' => [
-                        'User-Agent' => 'OWA SDK Client',
-                        'accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9'
-                    ]
-                ] 
-		    );
-		} catch( \GuzzleHttp\Exception\RequestException | \GuzzleHttp\Exception\ConnectException | \GuzzleHttp\Exception\ClientException $e ) {
-            
-            $r = $e->getRequest();
-              $res = null;
-              
-              error_log( print_r( $r, true ) );
-              
-              if ( $e->hasResponse() ) {
-                  
-                  $res = $e->getResponse();
-                  
-                  error_log( print_r( $res, true ) );
-              }
-              
-            if ( $this->getSetting( 'debug' ) ) {
-                 
-                 print_r($r);
-                 print_r($res);   
+                $v = self::wireValues( $v );
             }
-        }
-		return $res;
-	}
-	
-	private function applyNameSpaceToKeys( $params ) {
-		
-		$nparams = [];
-		$ns = $this->getSetting('ns');
-		foreach ( $params as $k => $v ) {
-			
-			$nparams[ $ns.$k ] = $v;
-		}
-		
-		return $nparams;
-	}
-	
-	private function getRequestParam($name) {
 
-        if (array_key_exists($name, $_GET)) {
-	        
-            return htmlentities( strip_tags( $_GET[$name] ) );
+            $out[ $k ] = $v;
         }
+
+        return $out;
     }
-    
-    private function makeEvent() {
-	    
-	    return new TrackingEvent;
+
+    private function makeEvent(): TrackingEvent {
+
+        return new TrackingEvent;
     }
-    
-    function setSiteId( $site_id ) {
-        
+
+    public function setSiteId( string $site_id ): void {
+
+        if ( $this->stateInit && $site_id !== $this->site_id ) {
+
+            sdk::debug( 'Site id changed after state was initialized; session state stays with the first site.' );
+        }
+
         $this->site_id = $site_id;
     }
-    
-    function getSiteId() {
-        
+
+    public function getSiteId(): string {
+
         return $this->site_id;
     }
 }
-
-?>
