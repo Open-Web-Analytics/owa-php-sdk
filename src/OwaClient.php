@@ -66,32 +66,38 @@ class OwaClient {
     }
 
     /**
-     * Credentials for the REST API.
+     * Credentials for the REST API: an application password, or the legacy
+     * API key and auth key.
      *
-     * api_key is the user's API key (their profile screen in OWA). auth_key is
-     * the install's OWA_AUTH_KEY constant from owa-config.php.
+     * app_password is an OWA application password (OWA 2.x: My Preferences >
+     * Application Passwords), sent as `Authorization: Bearer`. api_key is the
+     * user's API key (their profile screen in OWA) and auth_key the install's
+     * OWA_AUTH_KEY constant from owa-config.php; together they sign the
+     * request. When both kinds are set, the application password is used.
      *
-     * Looked up in order: the 'credentials' config array, the OWA_API_KEY /
-     * OWA_AUTH_KEY environment variables, constants of the same names, then
-     * the [defaults] or [default] section of ~/.owa/credentials.
+     * Looked up in order: the 'credentials' config array, the
+     * OWA_APP_PASSWORD / OWA_API_KEY / OWA_AUTH_KEY environment variables,
+     * constants of the same names, then the [defaults] or [default] section of
+     * ~/.owa/credentials.
      *
-     * @return array{api_key: string, auth_key: string}
+     * @return array{app_password: string, api_key: string, auth_key: string}
      */
     public function getCredentials(): array {
 
         $credentials = $this->config['credentials'];
 
-        if ( is_array( $credentials ) && ! empty( $credentials['api_key'] ) && ! empty( $credentials['auth_key'] ) ) {
+        if ( is_array( $credentials ) && self::isComplete( $credentials ) ) {
 
-            return [ 'api_key' => (string) $credentials['api_key'], 'auth_key' => (string) $credentials['auth_key'] ];
+            return self::normalizeCredentials( $credentials );
         }
 
         $credentials = [
-            'api_key'  => self::envOrConstant( 'OWA_API_KEY' ),
-            'auth_key' => self::envOrConstant( 'OWA_AUTH_KEY' ),
+            'app_password' => self::envOrConstant( 'OWA_APP_PASSWORD' ),
+            'api_key'      => self::envOrConstant( 'OWA_API_KEY' ),
+            'auth_key'     => self::envOrConstant( 'OWA_AUTH_KEY' ),
         ];
 
-        if ( ! $credentials['api_key'] && ! $credentials['auth_key'] ) {
+        if ( ! $credentials['app_password'] && ! $credentials['api_key'] && ! $credentials['auth_key'] ) {
 
             $credentials = $this->readCredentialsFile() ?? $credentials;
         }
@@ -99,6 +105,28 @@ class OwaClient {
         $this->config['credentials'] = $credentials;
 
         return $credentials;
+    }
+
+    /**
+     * @param array<string, mixed> $credentials
+     */
+    private static function isComplete( array $credentials ): bool {
+
+        return ! empty( $credentials['app_password'] )
+            || ( ! empty( $credentials['api_key'] ) && ! empty( $credentials['auth_key'] ) );
+    }
+
+    /**
+     * @param array<string, mixed> $credentials
+     * @return array{app_password: string, api_key: string, auth_key: string}
+     */
+    private static function normalizeCredentials( array $credentials ): array {
+
+        return [
+            'app_password' => (string) ( $credentials['app_password'] ?? '' ),
+            'api_key'      => (string) ( $credentials['api_key'] ?? '' ),
+            'auth_key'     => (string) ( $credentials['auth_key'] ?? '' ),
+        ];
     }
 
     private static function envOrConstant( string $name ): string {
@@ -114,7 +142,7 @@ class OwaClient {
     }
 
     /**
-     * @return array{api_key: string, auth_key: string}|null
+     * @return array{app_password: string, api_key: string, auth_key: string}|null
      */
     private function readCredentialsFile(): ?array {
 
@@ -137,9 +165,9 @@ class OwaClient {
         // [defaults] (what 1.0.x read), [default] (what its docs said), or bare keys
         $section = is_array( $ini ) ? ( $ini['defaults'] ?? $ini['default'] ?? $ini ) : null;
 
-        if ( is_array( $section ) && isset( $section['api_key'], $section['auth_key'] ) ) {
+        if ( is_array( $section ) && self::isComplete( $section ) ) {
 
-            return [ 'api_key' => (string) $section['api_key'], 'auth_key' => (string) $section['auth_key'] ];
+            return self::normalizeCredentials( $section );
         }
 
         return null;
@@ -215,7 +243,7 @@ class OwaClient {
     }
 
     /**
-     * Sends a signed REST request.
+     * Sends a REST request, authenticated as getCredentials() describes.
      *
      * @param array{http_method: string, uri: string, query?: array<string, mixed>, form_params?: array<string, mixed>} $params
      * @return mixed the envelope's 'data' member, or null on failure (see getLastErrors())
@@ -228,11 +256,19 @@ class OwaClient {
         $credentials = $this->getCredentials();
 
         $headers = [
-            'X-API-KEY'     => $credentials['api_key'],
-            'X-SIGNATURE'   => $this->generateRequestSignature( $url, $credentials ),
             'User-Agent'    => self::USER_AGENT,
             'Accept'        => 'application/json',
         ];
+
+        if ( $credentials['app_password'] !== '' ) {
+
+            $headers['Authorization'] = 'Bearer ' . $credentials['app_password'];
+
+        } else {
+
+            $headers['X-API-KEY'] = $credentials['api_key'];
+            $headers['X-SIGNATURE'] = $this->generateRequestSignature( $url, $credentials );
+        }
 
         $body = null;
 

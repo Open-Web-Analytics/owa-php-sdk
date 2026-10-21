@@ -102,6 +102,20 @@ auth_key = your-owa-auth-key
 
 Requests are signed with the full URL, so `instance_url` must use the scheme, host and port that OWA itself sees.
 
+### Application passwords (OWA 2.x)
+
+OWA 2.x issues application passwords: named, revocable credentials a user creates under My Preferences > Application Passwords. Pass one instead of the key pair:
+
+```php
+$sites = $sdk->createSites( [
+    'credentials' => [ 'app_password' => '...' ],   // 44 characters, shown once when created
+] );
+```
+
+It is sent as `Authorization: Bearer <password>`, and the request is not signed, so no `auth_key` is needed. When an application password and the key pair are both set, the application password is used. The `OWA_APP_PASSWORD` environment variable or constant, or `app_password =` in `~/.owa/credentials`, work like the keys above.
+
+OWA refuses an application password sent over plain HTTP unless the install allows it, so use an `https` `instance_url`. A read-only password is enough for `listSites()`; `addSite()` needs a full one.
+
 ## Configuration
 
 | Key | Default | |

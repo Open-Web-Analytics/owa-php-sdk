@@ -13,6 +13,9 @@ class OwaClientTest extends TestCase {
     const API_KEY = '0123456789abcdef0123456789abcdef';
     const AUTH_KEY = 'install-auth-key';
 
+    // the shape OWA 2.x issues: 44 base62 characters
+    const APP_PASSWORD = 'AbCdEfGhIjKl0123456789abcdefghijABCDEFGHIJ01';
+
     private FakeTransport $transport;
 
     private string $tmp = '';
@@ -26,6 +29,7 @@ class OwaClientTest extends TestCase {
 
         putenv( 'OWA_API_KEY' );
         putenv( 'OWA_AUTH_KEY' );
+        putenv( 'OWA_APP_PASSWORD' );
 
         if ( $this->tmp && is_dir( $this->tmp ) ) {
 
@@ -157,7 +161,7 @@ class OwaClientTest extends TestCase {
         $client = new OwaClient( [ 'transport' => $this->transport ] );
 
         // 1.0.x copied the api key into auth_key here
-        $this->assertSame( [ 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ], $client->getCredentials() );
+        $this->assertSame( [ 'app_password' => '', 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ], $client->getCredentials() );
     }
 
     /**
@@ -184,7 +188,86 @@ class OwaClientTest extends TestCase {
             putenv( $home === false ? 'HOME' : 'HOME=' . $home );
         }
 
-        $this->assertSame( [ 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ], $creds );
+        $this->assertSame( [ 'app_password' => '', 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ], $creds );
+    }
+
+    public function testAppPasswordIsSentAsBearerWithoutSigning(): void {
+
+        $this->transport->queue( new Response( 200, json_encode( [ 'data' => [] ] ) ) );
+
+        $this->sites( [ 'credentials' => [ 'app_password' => self::APP_PASSWORD ] ] )->listSites();
+
+        $headers = $this->transport->last()['headers'];
+
+        $this->assertSame( 'Bearer ' . self::APP_PASSWORD, $headers['Authorization'] );
+        $this->assertArrayNotHasKey( 'X-API-KEY', $headers );
+        $this->assertArrayNotHasKey( 'X-SIGNATURE', $headers );
+    }
+
+    public function testAppPasswordWinsOverTheLegacyKeys(): void {
+
+        $this->transport->queue( new Response( 200, json_encode( [ 'data' => [] ] ) ) );
+
+        $this->sites( [ 'credentials' => [ 'app_password' => self::APP_PASSWORD, 'api_key' => self::API_KEY, 'auth_key' => self::AUTH_KEY ] ] )->listSites();
+
+        $headers = $this->transport->last()['headers'];
+
+        $this->assertSame( 'Bearer ' . self::APP_PASSWORD, $headers['Authorization'] );
+        $this->assertArrayNotHasKey( 'X-API-KEY', $headers );
+    }
+
+    public function testAppPasswordFromEnvironment(): void {
+
+        putenv( 'OWA_APP_PASSWORD=' . self::APP_PASSWORD );
+
+        $client = new OwaClient( [ 'transport' => $this->transport ] );
+
+        $this->assertSame( [ 'app_password' => self::APP_PASSWORD, 'api_key' => '', 'auth_key' => '' ], $client->getCredentials() );
+    }
+
+    public function testAppPasswordFromFile(): void {
+
+        $this->tmp = sys_get_temp_dir() . '/owa-sdk-test-' . bin2hex( random_bytes( 4 ) );
+        mkdir( $this->tmp . '/.owa', 0700, true );
+        file_put_contents( $this->tmp . '/.owa/credentials', "[default]\napp_password = " . self::APP_PASSWORD . "\n" );
+
+        $home = getenv( 'HOME' );
+        putenv( 'HOME=' . $this->tmp );
+
+        try {
+
+            $creds = ( new OwaClient( [] ) )->getCredentials();
+
+        } finally {
+
+            putenv( $home === false ? 'HOME' : 'HOME=' . $home );
+        }
+
+        $this->assertSame( [ 'app_password' => self::APP_PASSWORD, 'api_key' => '', 'auth_key' => '' ], $creds );
+    }
+
+    public function testFailureLogCarriesNoAppPassword(): void {
+
+        $this->tmp = sys_get_temp_dir() . '/owa-sdk-test-' . bin2hex( random_bytes( 4 ) );
+        mkdir( $this->tmp );
+        $log = $this->tmp . '/error.log';
+        $previous = ini_set( 'error_log', $log );
+
+        try {
+
+            $this->transport->queue( new Response( 401 ) );
+            $this->sites( [ 'credentials' => [ 'app_password' => self::APP_PASSWORD ] ] )->listSites();
+
+        } finally {
+
+            ini_set( 'error_log', (string) $previous );
+        }
+
+        $written = (string) file_get_contents( $log );
+
+        $this->assertStringContainsString( 'failed: HTTP 401', $written );
+        $this->assertStringNotContainsString( self::APP_PASSWORD, $written );
+        $this->assertStringNotContainsString( 'Authorization', $written );
     }
 
     public function testInstanceUrlGetsTrailingSlash(): void {
